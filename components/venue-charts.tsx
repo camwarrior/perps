@@ -312,7 +312,6 @@ const CLIENT_TTL_MS = 60_000;
 const PERSIST_MS = 24 * 60 * 60 * 1000;
 const STORAGE_KEY = "perps.series.v1";
 
-let rememberedRange: ChartRange = "1S";
 let storeLoaded = false;
 
 function isPayload(value: unknown): value is ChartsPayload {
@@ -330,7 +329,6 @@ function loadStore(): void {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw) as { range?: unknown; entries?: Record<string, { at?: unknown; data?: unknown }> };
-    if (typeof parsed.range === "string" && isChartRange(parsed.range)) rememberedRange = parsed.range;
     const now = Date.now();
     for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
       if (!isChartRange(key) || !entry || typeof entry.at !== "number") continue;
@@ -350,15 +348,10 @@ function persistStore(): void {
     for (const [range, entry] of clientCache) {
       if (now - entry.at <= PERSIST_MS) entries[range] = entry;
     }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ range: rememberedRange, entries }));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries }));
   } catch {
     /* the in-memory copy still covers this visit */
   }
-}
-
-function rememberRange(next: ChartRange): void {
-  rememberedRange = next;
-  persistStore();
 }
 
 function cachedEntry(range: ChartRange): { at: number; data: ChartsPayload } | null {
@@ -402,11 +395,10 @@ export function prefetchCharts(): void {
 if (typeof window !== "undefined") prefetchCharts();
 
 export const VenueCharts = memo(function VenueCharts({ active }: { active: boolean }) {
-  const [range, setRange] = useState<ChartRange>(() => {
-    loadStore();
-    return rememberedRange;
-  });
-  const [data, setData] = useState<ChartsPayload | null>(() => cachedEntry(rememberedRange)?.data ?? null);
+  // Every visit opens on one week. A range picked in this visit stays while switching tabs,
+  // because the panel stays mounted, but it is not carried to the next visit.
+  const [range, setRange] = useState<ChartRange>("1S");
+  const [data, setData] = useState<ChartsPayload | null>(() => cachedEntry("1S")?.data ?? null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -428,7 +420,6 @@ export const VenueCharts = memo(function VenueCharts({ active }: { active: boole
   }, [active, range]);
 
   const select = (next: ChartRange) => {
-    rememberRange(next);
     const hit = cachedEntry(next);
     if (hit) {
       setData(hit.data);
