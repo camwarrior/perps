@@ -6,6 +6,7 @@ import {
   slicePoints,
   sumBars,
   timestampToMs,
+  toTwoSidedOi,
   volumeWeekStart,
   type ChartPoint,
   type ChartRange,
@@ -191,14 +192,14 @@ async function llamaOi(): Promise<{ risex: ChartPoint[]; txflow: ChartPoint[] }>
     if (rise != null) risex.push({ t, v: rise });
     if (tx != null) txflow.push({ t, v: tx });
   }
-  const points = { risex, txflow };
+  const points = { risex: toTwoSidedOi(risex), txflow: toTwoSidedOi(txflow) };
   llamaCache = { at: Date.now(), points };
   return points;
 }
 
 async function oiSeries(name: "risex" | "txflow", range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "DefiLlama · overview/open-interest";
-  const note = "Notional USD publicado por DefiLlama. La API del venue no trae esta serie. No es el OI mark×base de este tablero.";
+  const note = "Notional USD a dos lados (largo + corto), igual que el tablero y Dune. DefiLlama publica la mitad; esta serie es ese cierre diario UTC ×2, no el OI en vivo.";
   try {
     const all = await llamaOi();
     const points = slicePoints(name === "risex" ? all.risex : all.txflow, rangeStart(range, now));

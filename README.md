@@ -42,7 +42,7 @@ Entre los totales y la consulta de wallet hay cuatro gráficos: volumen y OI de 
 
 RISEx queda a la izquierda y Txflow a la derecha; en cada columna el volumen va arriba y el OI abajo. El volumen en `1S` son 7 velas diarias UTC. El resto de las temporalidades también usa velas de 1 día. El notional USDC es volumen base × cierre, sumado entre mercados. RISEx sale de `trading-view-data`. Txflow sale de `candleSnapshot`. No se rellenan días sin vela. Al pasar el mouse, cada barra muestra su marca de tiempo y su valor.
 
-El OI no lo publica ninguno de los dos como serie. Esos gráficos usan el histórico diario de DefiLlama (`overview/open-interest`), en USD, y lo dicen en la tarjeta. Si una ventana no tiene puntos, el recuadro queda vacío con la razón.
+El OI histórico no lo publica el venue. Los gráficos usan el diario de DefiLlama (`overview/open-interest`) multiplicado por 2, en USD, para la convención de dos lados (largo + corto) que publican el tablero y Dune. DefiLlama guarda la mitad. Es un cierre diario UTC, no el OI en vivo. Si una ventana no tiene puntos, el recuadro queda vacío con la razón.
 
 ## Wallet en la semana UTC
 

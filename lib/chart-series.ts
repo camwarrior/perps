@@ -42,6 +42,11 @@ export function volumeWeekStart(now: number): number {
   return today - 6 * DAY;
 }
 
+/** DefiLlama stores venue OI single-sided. Boards and Dune publish long+short, exactly ×2. */
+export function toTwoSidedOi(points: ChartPoint[]): ChartPoint[] {
+  return points.map((point) => ({ t: point.t, v: point.v * 2 }));
+}
+
 export function slicePoints(points: ChartPoint[], startMs: number | null): ChartPoint[] {
   const sorted = points.filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v)).toSorted((a, b) => a.t - b.t);
   if (startMs == null) return sorted;
