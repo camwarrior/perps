@@ -8,22 +8,53 @@ import { VenuePanel } from "@/components/venue-panel";
 import { VenueCharts } from "@/components/venue-charts";
 import { WalletWeek } from "@/components/wallet-week";
 import { useQuoteStream, useTickerBackfill } from "@/components/use-live";
-import { compareRows, decorateBook, filterCompare, filterMarkets, sortCompare, sortMarkets } from "@/lib/market";
+import { NowProvider, useNow } from "@/lib/now";
+import {
+  compareRows,
+  decorateBook,
+  filterCompare,
+  filterMarkets,
+  sortCompare,
+  sortMarkets,
+  type DecorateCache,
+} from "@/lib/market";
 import { formatAgo, formatSantiago } from "@/lib/time";
 import type { Snapshot } from "@/lib/types";
 
 const TOP = 15;
 
+/** The only part of the header that changes every second. */
+function Clock({ generatedAt, live, paused }: { generatedAt: number; live: boolean; paused: boolean }) {
+  const now = useNow();
+  return (
+    <p className="top-meta">
+      <time dateTime={new Date(now).toISOString()}>{formatSantiago(now)}</time>
+      <span className={live ? "pulse" : "pulse off"} aria-hidden="true" />
+      <span>libro {formatAgo(generatedAt, now)}</span>
+      {paused ? <span className="pause">pausa</span> : null}
+    </p>
+  );
+}
+
 export function Terminal({ initial }: { initial: Snapshot }) {
+  return (
+    <NowProvider initial={initial.generatedAt}>
+      <Book initial={initial} />
+    </NowProvider>
+  );
+}
+
+function Book({ initial }: { initial: Snapshot }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [appliedAt, setAppliedAt] = useState(initial.generatedAt);
-  const [now, setNow] = useState(initial.generatedAt);
   const [paused, setPaused] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
   const [view, setView] = useState<"book" | "compare">("book");
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState("");
   const streams = useQuoteStream(!paused);
+  const [risexCache] = useState<DecorateCache>(() => new Map());
+  const [txflowCache] = useState<DecorateCache>(() => new Map());
 
   const backfillIds = useMemo(() => {
     if (paused || streams.txflow === "live" || !snapshot.venues.txflow.ok) return [];
@@ -48,22 +79,15 @@ export function Terminal({ initial }: { initial: Snapshot }) {
 
   const gaps = useTickerBackfill(backfillIds, backfillIds.length > 0);
   const risex = useMemo(
-    () => decorateBook(snapshot.venues.risex, streams.overrides, gaps, appliedAt),
-    [snapshot, streams.overrides, gaps, appliedAt],
+    () => decorateBook(snapshot.venues.risex, streams.overrides, gaps, appliedAt, risexCache),
+    [snapshot, streams.overrides, gaps, appliedAt, risexCache],
   );
   const txflow = useMemo(
-    () => decorateBook(snapshot.venues.txflow, streams.overrides, gaps, appliedAt),
-    [snapshot, streams.overrides, gaps, appliedAt],
+    () => decorateBook(snapshot.venues.txflow, streams.overrides, gaps, appliedAt, txflowCache),
+    [snapshot, streams.overrides, gaps, appliedAt, txflowCache],
   );
   const limit = showAll ? null : TOP;
   const live = !paused && (risex.ok || txflow.ok);
-
-  useEffect(() => {
-    const tick = () => setNow(Date.now());
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -119,22 +143,17 @@ export function Terminal({ initial }: { initial: Snapshot }) {
           <h1 className="brand-mark">PERPS</h1>
           <p className="brand-sub">RISEx / Txflow</p>
         </div>
-        <p className="top-meta">
-          <time dateTime={new Date(now).toISOString()}>{formatSantiago(now)}</time>
-          <span className={live ? "pulse" : "pulse off"} aria-hidden="true" />
-          <span>libro {formatAgo(snapshot.generatedAt, now)}</span>
-          {paused ? <span className="pause">pausa</span> : null}
-        </p>
+        <Clock generatedAt={snapshot.generatedAt} live={live} paused={paused} />
       </header>
 
       <section className="venues">
-        <VenuePanel book={risex} stream={streams.risex} now={now} paused={paused} />
-        <VenuePanel book={txflow} stream={streams.txflow} now={now} paused={paused} />
+        <VenuePanel book={risex} stream={streams.risex} paused={paused} />
+        <VenuePanel book={txflow} stream={streams.txflow} paused={paused} />
       </section>
 
       <VenueCharts />
 
-      <WalletWeek now={now} />
+      <WalletWeek />
 
       {pollError ? (
         <p className="banner" role="status">

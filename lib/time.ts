@@ -1,14 +1,16 @@
 const ZONE = "America/Santiago";
 
+const santiagoClock = new Intl.DateTimeFormat("es-CL", {
+  timeZone: ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZoneName: "short",
+});
+
 export function formatSantiago(ms: number): string {
-  const parts = new Intl.DateTimeFormat("es-CL", {
-    timeZone: ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-    timeZoneName: "short",
-  }).formatToParts(new Date(ms));
+  const parts = santiagoClock.formatToParts(new Date(ms));
   const pick = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   const zoneName = pick("timeZoneName");

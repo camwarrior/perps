@@ -119,16 +119,32 @@ export function applyLive(market: Market, ws: QuoteOverride | undefined, gap: Qu
   return withOverride(fillGaps(market, gap), ws, receivedAt);
 }
 
+export type DecorateCache = Map<
+  string,
+  { base: Market; ws: QuoteOverride | undefined; gap: QuoteOverride | undefined; at: number; result: Market }
+>;
+
+/**
+ * Merge live quotes into the polled book. With a cache, a market whose inputs did not change
+ * keeps its previous object, so memoized rows skip re-rendering.
+ */
 export function decorateBook(
   book: VenueBook,
   ws: Record<string, QuoteOverride>,
   gaps: Record<string, QuoteOverride>,
   receivedAt: number,
+  cache?: DecorateCache,
 ): VenueBook {
   if (!book.ok) return book;
   const markets = book.markets.map((market) => {
     const key = `${market.venue}:${market.id}`;
-    return applyLive(market, ws[key], gaps[key], receivedAt);
+    const live = ws[key];
+    const gap = gaps[key];
+    const hit = cache?.get(key);
+    if (hit && hit.base === market && hit.ws === live && hit.gap === gap && hit.at === receivedAt) return hit.result;
+    const result = applyLive(market, live, gap, receivedAt);
+    cache?.set(key, { base: market, ws: live, gap, at: receivedAt, result });
+    return result;
   });
   return { ...book, markets, totals: summarize(markets) };
 }
