@@ -113,9 +113,13 @@ function Book({ initial }: { initial: Snapshot }) {
   const live = !paused && (risex.ok || txflow.ok);
   const shownBook = venue === "risex" ? risex : txflow;
 
+  const newest = useRef(initial.generatedAt);
   useEffect(() => {
     let timer: number | null = null;
     let cancel = false;
+    // Each arm() starts a new polling loop and retires the previous one. Without it, leaving the app
+    // in the middle of a refresh and coming back could leave two loops running, doubling the requests.
+    let generation = 0;
 
     const pull = async () => {
       try {
@@ -124,6 +128,9 @@ function Book({ initial }: { initial: Snapshot }) {
         const data = (await response.json()) as Snapshot;
         if (cancel) return;
         if (!data?.venues?.risex || !data?.venues?.txflow) throw new Error("payload");
+        // A slow answer that arrives after a newer one is dropped instead of rolling the book back.
+        if (data.generatedAt < newest.current) return;
+        newest.current = data.generatedAt;
         setSnapshot((previous) => ({
           ...data,
           venues: {
@@ -138,17 +145,25 @@ function Book({ initial }: { initial: Snapshot }) {
       }
     };
 
+    const stop = () => {
+      generation += 1;
+      if (timer) window.clearTimeout(timer);
+      timer = null;
+    };
+
     const arm = () => {
+      stop();
+      const mine = generation;
       timer = window.setTimeout(async () => {
+        timer = null;
         if (!document.hidden) await pull();
-        if (!cancel && !document.hidden) arm();
+        if (!cancel && !document.hidden && mine === generation) arm();
       }, 10_000);
     };
 
     const onVisibility = () => {
       if (document.hidden) {
-        if (timer) window.clearTimeout(timer);
-        timer = null;
+        stop();
         setPaused(true);
         return;
       }
@@ -157,11 +172,13 @@ function Book({ initial }: { initial: Snapshot }) {
       arm();
     };
 
-    arm();
+    // Opened in a background tab: wait for it to be shown instead of polling unseen.
+    if (document.hidden) onVisibility();
+    else arm();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancel = true;
-      if (timer) window.clearTimeout(timer);
+      stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
