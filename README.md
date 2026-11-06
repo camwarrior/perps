@@ -36,6 +36,16 @@ Txflow, solo mainnet (`https://rpc.txflow.com/info`, header `x-api-version: 2026
 
 No se usa testnet.
 
+## Wallet en la semana UTC
+
+Debajo de los totales de cada venue hay un campo para pegar una dirección `0x`. La consulta corre al pedirla y no se guarda.
+
+La ventana es el lunes 00:00:00.000 UTC hasta el lunes siguiente 00:00:00.000 UTC, sin incluir ese instante. No es la hora de Chile ni un rodado de 7 días.
+
+- RISEx: `GET /v1/stats/user-volume` con `start_time` y `end_time` en nanosegundos. El volumen es `total_volume`, notional USDC de trades y liquidaciones.
+- Txflow: suma de `|precio × tamaño|` de `userFills` de perpetuos en esa ventana. Si hay más de 4.000 fills, el volumen queda en "—" para no presentar una suma incompleta.
+- El OI promedio de esa semana no lo publica ninguno de los dos. RISEx tiene un promedio ponderado de 24h, 7d, 30d y all-time; Txflow solo un snapshot del nocional abierto. Esos números no se muestran como si fueran la semana. El total de volumen aparece solo cuando ambas fuentes traen notional USDC completo.
+
 ## Campos que no están
 
 - Txflow no publica una tasa de funding a 8 horas. Esa columna queda en "—". La tasa que sí viene es la del intervalo de liquidación (hoy 1 hora) y se etiqueta `1h`. En la API ya está en porcentaje (`0.00125` = 0.00125%).

@@ -196,6 +196,7 @@ dd {
 }
 
 .venue-head h2,
+.venue-head h3,
 .book-head h3 {
   font-size: 12px;
   font-weight: 600;
@@ -533,6 +534,68 @@ dd {
   text-transform: uppercase;
 }
 
+.wallet {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  background: rgba(9, 11, 10, 0.86);
+  padding: 8px 10px 10px;
+}
+
+.wallet-head h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.wallet-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wallet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.wallet-input {
+  width: 100%;
+}
+
+.wallet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.wallet-metrics {
+  grid-template-columns: 1fr 1fr;
+}
+
+.wallet-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wallet-total .num {
+  font-size: 16px;
+}
+
+.wallet-total small {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
 .loading-note {
   margin-top: 12px;
 }
@@ -543,7 +606,8 @@ dd {
 }
 
 @media (max-width: 860px) {
-  .venues {
+  .venues,
+  .wallet-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -554,7 +618,8 @@ dd {
     flex-direction: column;
   }
 
-  .metrics {
+  .metrics,
+  .wallet-metrics {
     grid-template-columns: 1fr;
     justify-items: stretch;
   }
