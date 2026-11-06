@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import { CHART_RANGES, type ChartPoint, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
 import { formatCompact, formatFull } from "@/lib/format";
@@ -46,63 +46,75 @@ function ChartFrame({ title, series }: { title: string; series: ChartSeries | nu
 function Spark({ points, unit }: { points: ChartPoint[]; unit: string }) {
   const width = 320;
   const height = 92;
-  const padX = 4;
-  const padY = 8;
-  const [active, setActive] = useState<number | null>(null);
+  const padY = 6;
+  const gap = 0.12;
+  const [active, setActive] = useState<{ index: number; x: number; y: number } | null>(null);
   const max = Math.max(...points.map((point) => point.v), 0);
   const min = Math.min(...points.map((point) => point.v), 0);
   const span = max - min || 1;
-  const slot = (width - padX * 2) / points.length;
+  const slot = width / points.length;
   const yOf = (value: number) => padY + (1 - (value - min) / span) * (height - padY * 2);
   const bars = points.map((point, index) => {
-    const x = padX + index * slot;
+    const w = slot * (1 - gap);
+    const x = index * slot + (slot - w) / 2;
     const y = yOf(point.v);
-    const base = yOf(Math.min(0, min));
+    const base = yOf(0);
     const top = Math.min(y, base);
-    const h = Math.max(1, Math.abs(base - y));
-    return { x, top, h, w: Math.max(1, slot - 1), point };
+    const h = Math.max(1.5, Math.abs(base - y));
+    return { x, top, h, w, point };
   });
   const last = points[points.length - 1];
   const first = points[0];
-  const tip = active == null ? null : bars[active];
+  const tip = active == null ? null : bars[active.index];
 
-  const pick = (clientX: number, svg: SVGSVGElement) => {
-    const bounds = svg.getBoundingClientRect();
-    if (bounds.width === 0) return;
-    const x = ((clientX - bounds.left) / bounds.width) * width;
-    const index = Math.min(bars.length - 1, Math.max(0, Math.floor((x - padX) / slot)));
-    setActive(index);
+  const pick = (event: MouseEvent<SVGSVGElement>) => {
+    const svg = event.currentTarget;
+    const matrix = svg.getScreenCTM();
+    if (!matrix) return;
+    const cursor = svg.createSVGPoint();
+    cursor.x = event.clientX;
+    cursor.y = event.clientY;
+    const local = cursor.matrixTransform(matrix.inverse());
+    const index = Math.min(bars.length - 1, Math.max(0, Math.floor(local.x / slot)));
+    const bar = bars[index];
+    if (!bar) return;
+    const anchor = svg.createSVGPoint();
+    anchor.x = bar.x + bar.w / 2;
+    anchor.y = bar.top;
+    const screen = anchor.matrixTransform(matrix);
+    const half = 128;
+    const x = Math.min(window.innerWidth - half - 8, Math.max(half + 8, screen.x));
+    setActive({ index, x, y: screen.y });
   };
 
   return (
     <figure className="spark" onMouseLeave={() => setActive(null)}>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={last ? `${formatCandle(last.t)} · ${formatFull(last.v, unit)}` : "sin puntos"}
-        onMouseMove={(event) => pick(event.clientX, event.currentTarget)}
-      >
-        {bars.map((bar, index) => (
-          <rect
-            key={bar.point.t}
-            x={bar.x}
-            y={bar.top}
-            width={bar.w}
-            height={bar.h}
-            className={index === active ? "spark-bar is-active" : "spark-bar"}
-          />
-        ))}
-      </svg>
-      {tip ? (
-        <div
-          className="chart-tip"
-          role="tooltip"
-          style={{ left: `${((tip.x + tip.w / 2) / width) * 100}%`, top: `${(tip.top / height) * 100}%` }}
+      <div className="spark-plot">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={last ? `${formatCandle(last.t)} · ${formatFull(last.v, unit)}` : "sin puntos"}
+          onMouseMove={pick}
         >
-          <span>{formatCandle(tip.point.t)}</span>
-          <span className="num">{formatFull(tip.point.v, unit)}</span>
-        </div>
-      ) : null}
+          {bars.map((bar, index) => (
+            <rect
+              key={bar.point.t}
+              x={bar.x}
+              y={bar.top}
+              width={bar.w}
+              height={bar.h}
+              className={index === active?.index ? "spark-bar is-active" : "spark-bar"}
+            />
+          ))}
+        </svg>
+        {tip && active ? (
+          <div className="chart-tip" role="tooltip" style={{ left: `${active.x}px`, top: `${active.y}px` }}>
+            <span>{formatCandle(tip.point.t)}</span>
+            <span className="num">{formatFull(tip.point.v, unit)}</span>
+          </div>
+        ) : null}
+      </div>
       <figcaption className="spark-scale">
         <span>{first ? formatAxis(first.t) : ""}</span>
         <span className="num">{last ? `últ. ${formatCompact(last.v)}` : "—"}</span>

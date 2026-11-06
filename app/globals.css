@@ -584,8 +584,11 @@ dd {
 }
 
 .spark {
-  position: relative;
   margin: 6px 0 0;
+}
+
+.spark-plot {
+  position: relative;
 }
 
 .spark svg {
@@ -604,7 +607,7 @@ dd {
 }
 
 .chart-tip {
-  position: absolute;
+  position: fixed;
   z-index: 4;
   transform: translate(-50%, -110%);
   pointer-events: none;
