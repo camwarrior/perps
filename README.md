@@ -4,6 +4,10 @@ Libro de métricas en vivo para perpetuos de RISEx (rise.trade) y Txflow. Solo l
 
 La interfaz está en español (Chile). Los números van en formato de mesa (agrupación con coma, decimales con punto) y la hora en `America/Santiago`.
 
+## Diseño
+
+Fondo pizarra, una sola familia (Archivo, autoalojada con su eje de ancho), y dos colores de identidad que solo marcan venue: ámbar para RISEx y azul para Txflow, validados como par para daltonismo. Arriba, RISEx contra Txflow con una barra dividida por métrica. Debajo, cuatro pestañas: Libro (un venue a la vez), Comparar (mismo símbolo en ambos), Series y Wallet. En el teléfono el libro es una lista de dos líneas por mercado y la página no tiene scroll lateral.
+
 ## Correr en local
 
 ```bash
@@ -38,15 +42,15 @@ No se usa testnet.
 
 ## Series de venue
 
-Entre los totales y la consulta de wallet hay cuatro gráficos: volumen y OI de RISEx, volumen y OI de Txflow. Las temporalidades son `1S`, `1M`, `3M`, `1A` y `ALL`.
+La pestaña Series muestra dos gráficos: volumen diario y OI al cierre diario, con RISEx (ámbar) y Txflow (azul) en el mismo eje. Las temporalidades son `1S`, `1M`, `3M`, `1A` y `ALL`. Hasta 45 días se dibujan columnas pareadas por día; con más días, dos líneas. Al pasar el mouse o tocar, un tooltip muestra el día y el valor de cada venue, y "Ver datos" abre la tabla completa.
 
-RISEx queda a la izquierda y Txflow a la derecha; en cada columna el volumen va arriba y el OI abajo. El volumen en `1S` son 7 velas diarias UTC. El resto de las temporalidades también usa velas de 1 día. El notional USDC es volumen base × cierre, sumado entre mercados. RISEx sale de `trading-view-data`. Txflow sale de `candleSnapshot`. No se rellenan días sin vela. Al pasar el mouse, cada barra muestra su marca de tiempo y su valor.
+Todas las temporalidades usan velas de 1 día UTC. El notional USDC es volumen base × cierre, sumado entre mercados. RISEx sale de `trading-view-data`. Txflow sale de `candleSnapshot`. No se rellenan días sin vela. Al pasar el mouse, cada barra muestra su marca de tiempo y su valor.
 
 El OI histórico no lo publica el venue. Los gráficos usan el diario de DefiLlama (`overview/open-interest`) multiplicado por 2, en USD, para la convención de dos lados (largo + corto) que publican el tablero y Dune. DefiLlama guarda la mitad. Es un cierre diario UTC, no el OI en vivo. Si una ventana no tiene puntos, el recuadro queda vacío con la razón.
 
 ## Wallet en la semana UTC
 
-Debajo de los totales de cada venue hay un campo para pegar una dirección `0x`. La consulta corre al pedirla y no se guarda.
+En la pestaña Wallet hay un campo para pegar una dirección `0x`. La consulta corre al pedirla y no se guarda.
 
 La ventana es el lunes 00:00:00.000 UTC hasta el lunes siguiente 00:00:00.000 UTC, sin incluir ese instante. No es la hora de Chile ni un rodado de 7 días.
 

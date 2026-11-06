@@ -1,154 +1,272 @@
 "use client";
 
-import { memo, useEffect, useState, type PointerEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { CHART_RANGES, type ChartPoint, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
+import { CHART_RANGES, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
 import { formatCompact, formatFull } from "@/lib/format";
+import { useNowSelect } from "@/lib/now";
 
-const utcDay = new Intl.DateTimeFormat("es-CL", {
-  timeZone: "UTC",
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
+const dayLabel = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", day: "numeric", month: "short" });
+const dayLong = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
-const WIDTH = 320;
-const HEIGHT = 92;
+const RANGE_LABEL: Record<ChartRange, string> = { "1S": "1 semana", "1M": "1 mes", "3M": "3 meses", "1A": "1 año", ALL: "Todo" };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MARGIN = { top: 10, right: 8, bottom: 26, left: 56 };
+/** Up to this many days the two venues are paired columns; beyond it, two lines. */
+const MAX_BARS = 45;
 
-function formatCandle(ms: number): string {
-  return `${utcDay.format(new Date(ms)).replace(",", "")} UTC`;
+function formatDay(ms: number): string {
+  return dayLabel.format(new Date(ms)).replace(".", "");
 }
 
-function formatAxis(ms: number): string {
-  return formatCandle(ms).replace(/\s+\d{2}:\d{2} UTC$/, " UTC");
+/** Clean axis steps: 1, 2, 2.5 or 5 times a power of ten. */
+function niceStep(raw: number): number {
+  if (!(raw > 0)) return 1;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const unit = raw / power;
+  const nice = unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 2.5 ? 2.5 : unit <= 5 ? 5 : 10;
+  return nice * power;
 }
 
-/** Same box as a drawn chart, so the page does not move when the series arrive. */
-function SparkPlaceholder({ text }: { text: string }) {
-  return (
-    <>
-      <figure className="spark" aria-hidden="true">
-        <div className="spark-plot">
-          <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" />
-          <p className="spark-overlay">{text}</p>
-        </div>
-        <figcaption className="spark-scale">
-          <span>&nbsp;</span>
-        </figcaption>
-      </figure>
-      <p className="note">&nbsp;</p>
-    </>
-  );
+function useSize<T extends Element>() {
+  const ref = useRef<T>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, size] as const;
 }
 
-function ChartFrame({ title, series }: { title: string; series: ChartSeries | null }) {
-  return (
-    <article className="chart-card">
-      <header className="chart-head">
-        <h3>{title}</h3>
-        <p className="src">{series ? `${series.unit || "—"} · ${series.source}` : " "}</p>
-      </header>
-      {series == null ? (
-        <SparkPlaceholder text="Leyendo serie…" />
-      ) : series.points.length === 0 ? (
-        <SparkPlaceholder text={series.note || series.error || "Sin serie."} />
-      ) : (
-        <>
-          <Spark points={series.points} unit={series.unit} />
-          <p className="note">{series.note || " "}</p>
-        </>
-      )}
-    </article>
-  );
+/** Column with a 4 px rounded data end, square at the baseline. */
+function columnPath(x: number, y: number, w: number, h: number): string {
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
 
-function Spark({ points, unit }: { points: ChartPoint[]; unit: string }) {
-  const padY = 6;
-  const gap = 0.12;
-  const [active, setActive] = useState<{ index: number; x: number; y: number } | null>(null);
-  const max = Math.max(...points.map((point) => point.v), 0);
-  const min = Math.min(...points.map((point) => point.v), 0);
-  const span = max - min || 1;
-  const slot = WIDTH / points.length;
-  const yOf = (value: number) => padY + (1 - (value - min) / span) * (HEIGHT - padY * 2);
-  const bars = points.map((point, index) => {
-    const w = slot * (1 - gap);
-    const x = index * slot + (slot - w) / 2;
-    const y = yOf(point.v);
-    const base = yOf(0);
-    const top = Math.min(y, base);
-    const h = Math.max(1.5, Math.abs(base - y));
-    return { x, top, h, w, point };
-  });
-  const last = points[points.length - 1];
-  const first = points[0];
-  const tip = active == null ? null : bars[active.index];
+type Day = { t: number; rx: number | null; tx: number | null };
 
-  // Pointer events cover mouse, pen and touch, so the tooltip also works on a phone.
-  const pick = (event: PointerEvent<SVGSVGElement>) => {
-    const svg = event.currentTarget;
-    const matrix = svg.getScreenCTM();
-    if (!matrix) return;
-    const cursor = svg.createSVGPoint();
-    cursor.x = event.clientX;
-    cursor.y = event.clientY;
-    const local = cursor.matrixTransform(matrix.inverse());
-    const index = Math.min(bars.length - 1, Math.max(0, Math.floor(local.x / slot)));
-    const bar = bars[index];
-    if (!bar) return;
-    const anchor = svg.createSVGPoint();
-    anchor.x = bar.x + bar.w / 2;
-    anchor.y = bar.top;
-    const screen = anchor.matrixTransform(matrix);
-    const half = 80;
-    const x = Math.min(window.innerWidth - half - 8, Math.max(half + 8, screen.x));
-    setActive((prev) => (prev && prev.index === index && prev.x === x && prev.y === screen.y ? prev : { index, x, y: screen.y }));
+function mergeDays(rx: ChartSeries | null, tx: ChartSeries | null): Day[] {
+  const days = new Map<number, Day>();
+  for (const point of rx?.points ?? []) days.set(point.t, { t: point.t, rx: point.v, tx: days.get(point.t)?.tx ?? null });
+  for (const point of tx?.points ?? []) days.set(point.t, { t: point.t, rx: days.get(point.t)?.rx ?? null, tx: point.v });
+  return [...days.values()].toSorted((a, b) => a.t - b.t);
+}
+
+function Chart({
+  title,
+  unit,
+  rx,
+  tx,
+  loading,
+}: {
+  title: string;
+  unit: string;
+  rx: ChartSeries | null;
+  tx: ChartSeries | null;
+  loading: boolean;
+}) {
+  const [ref, size] = useSize<SVGSVGElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const days = useMemo(() => mergeDays(rx, tx), [rx, tx]);
+  const pending = rx == null && tx == null;
+  const asBars = days.length <= MAX_BARS;
+  // Today's UTC day has not closed: its bar is a running value (volume so far, OI's latest snapshot).
+  const todayStart = useNowSelect((now) => Math.floor(now / DAY_MS) * DAY_MS);
+  const isOpen = (day: Day) => day.t >= todayStart;
+  const hasOpenDay = days.some(isOpen);
+
+  const plotW = Math.max(0, size.width - MARGIN.left - MARGIN.right);
+  const plotH = Math.max(0, size.height - MARGIN.top - MARGIN.bottom);
+  const max = Math.max(0, ...days.flatMap((day) => [day.rx ?? 0, day.tx ?? 0]));
+  const step = niceStep(max / 3);
+  const top = Math.max(step, Math.ceil(max / step) * step);
+  const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, index) => index * step);
+  const yOf = (value: number) => MARGIN.top + plotH - (value / top) * plotH;
+  const band = days.length ? plotW / days.length : 0;
+  const xMid = (index: number) => MARGIN.left + band * index + band / 2;
+
+  const barW = Math.max(1, Math.min(24, (band * 0.78 - 2) / 2));
+  const linePath = (key: "rx" | "tx") => {
+    let d = "";
+    let open = false;
+    days.forEach((day, index) => {
+      const value = day[key];
+      if (value == null) {
+        open = false;
+        return;
+      }
+      d += `${open ? "L" : "M"}${xMid(index).toFixed(1)},${yOf(value).toFixed(1)}`;
+      open = true;
+    });
+    return d;
   };
 
+  const pick = (event: PointerEvent<SVGSVGElement>) => {
+    if (!days.length || band === 0) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    const index = Math.floor((event.clientX - box.left - MARGIN.left) / band);
+    const clamped = Math.min(days.length - 1, Math.max(0, index));
+    setHover((prev) => (prev === clamped ? prev : clamped));
+  };
+
+  const active = hover == null ? null : days[hover];
+  const tipLeft = hover == null ? 0 : Math.min(Math.max(xMid(hover) - 90, 0), Math.max(0, size.width - 190));
+  const notes =
+    rx?.note && tx?.note && rx.note === tx.note
+      ? rx.note
+      : [rx?.note && `RISEx: ${rx.note}`, tx?.note && `Txflow: ${tx.note}`].filter(Boolean).join(" ");
+  const sources = [rx?.source && `RISEx ${rx.source}`, tx?.source && `Txflow ${tx.source}`].filter(Boolean).join(", ");
+  const emptyText = pending ? "Leyendo series…" : days.length === 0 ? rx?.error || tx?.error || "Ningún venue publica puntos en esta ventana." : null;
+  const legendNote = (series: ChartSeries | null) => (series && series.points.length === 0 ? " (sin puntos en esta ventana)" : "");
+  // Date labels about every 90 px, always the last day, never two labels crowding the end.
+  const labelEvery = Math.max(1, Math.ceil(days.length / Math.max(1, Math.floor(plotW / 90))));
+  const axisDays = days.length
+    ? [
+        ...days.map((_, index) => index).filter((index) => index % labelEvery === 0 && days.length - 1 - index >= labelEvery * 0.6),
+        days.length - 1,
+      ]
+    : [];
+
   return (
-    <figure className="spark" onPointerLeave={() => setActive(null)}>
-      <div className="spark-plot">
+    <article>
+      <header className="chart-head">
+        <h3>{title}</h3>
+        <ul className="legend">
+          <li>
+            <span className="swatch rx" aria-hidden="true" />
+            RISEx{legendNote(rx)}
+          </li>
+          <li>
+            <span className="swatch tx" aria-hidden="true" />
+            Txflow{legendNote(tx)}
+          </li>
+        </ul>
+      </header>
+      <div className={loading ? "chart-body is-loading" : "chart-body"}>
         <svg
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          preserveAspectRatio="none"
+          ref={ref}
           role="img"
-          aria-label={last ? `${formatCandle(last.t)} · ${formatFull(last.v, unit)}` : "sin puntos"}
+          aria-label={`${title}. ${days.length} días. Detalle en la tabla de datos.`}
           onPointerMove={pick}
           onPointerDown={pick}
+          onPointerLeave={() => setHover(null)}
         >
-          {bars.map((bar, index) => (
-            <rect
-              key={bar.point.t}
-              x={bar.x}
-              y={bar.top}
-              width={bar.w}
-              height={bar.h}
-              className={index === active?.index ? "spark-bar is-active" : "spark-bar"}
-            />
-          ))}
+          {size.width > 0 ? (
+            <>
+              {ticks.map((tick) => (
+                <g key={tick}>
+                  <line className="grid-line" x1={MARGIN.left} x2={size.width - MARGIN.right} y1={yOf(tick)} y2={yOf(tick)} />
+                  <text className="axis-text" x={MARGIN.left - 10} y={yOf(tick)} dy="0.32em" textAnchor="end">
+                    {tick === 0 ? "0" : formatCompact(tick)}
+                  </text>
+                </g>
+              ))}
+              {axisDays.map((index) => (
+                <text
+                  key={days[index].t}
+                  className="axis-text"
+                  x={xMid(index)}
+                  y={size.height - 6}
+                  textAnchor={asBars ? "middle" : index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}
+                >
+                  {formatDay(days[index].t)}
+                </text>
+              ))}
+              {asBars ? (
+                days.map((day, index) => {
+                  const dim = [hover != null && hover !== index ? "dim" : "", isOpen(day) ? "open-day" : ""].filter(Boolean).join(" ") || undefined;
+                  const left = xMid(index) - barW - 1;
+                  return (
+                    <g key={day.t} className={dim}>
+                      {day.rx != null && day.rx > 0 ? (
+                        <path className="bar-rx" d={columnPath(left, yOf(day.rx), barW, yOf(0) - yOf(day.rx))} />
+                      ) : null}
+                      {day.tx != null && day.tx > 0 ? (
+                        <path className="bar-tx" d={columnPath(left + barW + 2, yOf(day.tx), barW, yOf(0) - yOf(day.tx))} />
+                      ) : null}
+                    </g>
+                  );
+                })
+              ) : (
+                <>
+                  <path className="line-rx" d={linePath("rx")} />
+                  <path className="line-tx" d={linePath("tx")} />
+                  {hover != null ? (
+                    <line className="crosshair" x1={xMid(hover)} x2={xMid(hover)} y1={MARGIN.top} y2={MARGIN.top + plotH} />
+                  ) : null}
+                </>
+              )}
+            </>
+          ) : null}
         </svg>
-        {tip && active ? (
-          <div className="chart-tip" role="tooltip" style={{ left: `${active.x}px`, top: `${active.y}px` }}>
-            <span>{formatCandle(tip.point.t)}</span>
-            <span className="num" title={formatFull(tip.point.v, unit)}>
-              {formatCompact(tip.point.v)} {unit}
-            </span>
+        {emptyText ? <p className="chart-empty">{emptyText}</p> : null}
+        {active ? (
+          <div className="chart-tip" role="tooltip" style={{ left: `${tipLeft}px`, top: "0px" }}>
+            <p className="when">
+              {dayLong.format(new Date(active.t))} UTC{isOpen(active) ? ", en curso" : ""}
+            </p>
+            <ul>
+              <li>
+                <span className="swatch sm rx" aria-hidden="true" />
+                RISEx
+                <span className="num" title={active.rx == null ? undefined : formatFull(active.rx, unit)}>
+                  {active.rx == null ? "—" : `${formatCompact(active.rx)} ${unit}`}
+                </span>
+              </li>
+              <li>
+                <span className="swatch sm tx" aria-hidden="true" />
+                Txflow
+                <span className="num" title={active.tx == null ? undefined : formatFull(active.tx, unit)}>
+                  {active.tx == null ? "—" : `${formatCompact(active.tx)} ${unit}`}
+                </span>
+              </li>
+            </ul>
           </div>
         ) : null}
       </div>
-      <figcaption className="spark-scale">
-        <span>{first ? formatAxis(first.t) : ""}</span>
-        <span className="num">{last ? `últ. ${formatCompact(last.v)}` : "—"}</span>
-        <span>{last ? formatAxis(last.t) : ""}</span>
-      </figcaption>
-    </figure>
+      {notes || sources ? (
+        <p className="chart-note">
+          {hasOpenDay ? "La barra de hoy es provisional: el día UTC aún no cierra. " : null}
+          {notes} {sources ? `Fuente: ${sources}.` : null}
+        </p>
+      ) : null}
+      {days.length > 0 ? (
+        <details className="chart-note">
+          <summary>Ver datos</summary>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Día UTC</th>
+                <th scope="col">RISEx</th>
+                <th scope="col">Txflow</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.toReversed().map((day) => (
+                <tr key={day.t}>
+                  <td>{formatDay(day.t)}</td>
+                  <td>{day.rx == null ? "—" : formatFull(Math.round(day.rx), unit)}</td>
+                  <td>{day.tx == null ? "—" : formatFull(Math.round(day.tx), unit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ) : null}
+    </article>
   );
 }
 
 // Series are daily UTC candles: a range fetched once in this visit is reused for a minute.
 const clientCache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
+const clientJobs = new Map<ChartRange, Promise<ChartsPayload>>();
 const CLIENT_TTL_MS = 60_000;
 
 function freshCache(range: ChartRange): ChartsPayload | null {
@@ -156,9 +274,34 @@ function freshCache(range: ChartRange): ChartsPayload | null {
   return hit && Date.now() - hit.at < CLIENT_TTL_MS ? hit.data : null;
 }
 
+/** One request per range at a time, shared by the prefetch and the tab. */
+function loadCharts(range: ChartRange): Promise<ChartsPayload> {
+  const running = clientJobs.get(range);
+  if (running) return running;
+  const job = fetch(`/api/charts?range=${range}`)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("HTTP");
+      const body = (await response.json()) as ChartsPayload;
+      if (body.range !== range) throw new Error("range");
+      clientCache.set(range, { at: Date.now(), data: body });
+      return body;
+    })
+    .finally(() => clientJobs.delete(range));
+  clientJobs.set(range, job);
+  return job;
+}
+
+/** Fetch the default range while the browser is idle, so the Series tab opens already drawn. */
+export function prefetchCharts(): void {
+  if (freshCache("1S")) return;
+  void loadCharts("1S").catch(() => {
+    /* the tab retries when opened */
+  });
+}
+
 export const VenueCharts = memo(function VenueCharts() {
   const [range, setRange] = useState<ChartRange>("1S");
-  const [data, setData] = useState<ChartsPayload | null>(null);
+  const [data, setData] = useState<ChartsPayload | null>(() => freshCache("1S"));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -166,15 +309,12 @@ export const VenueCharts = memo(function VenueCharts() {
     let cancel = false;
     const run = async () => {
       try {
-        const response = await fetch(`/api/charts?range=${range}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("HTTP");
-        const body = (await response.json()) as ChartsPayload;
-        if (cancel || body.range !== range) return;
-        clientCache.set(range, { at: Date.now(), data: body });
+        const body = await loadCharts(range);
+        if (cancel) return;
         setData(body);
         setError(null);
       } catch {
-        if (!cancel) setError("No se pudieron leer las series.");
+        if (!cancel) setError("No se pudieron leer las series. Prueba otra temporalidad o vuelve en un momento.");
       }
     };
     void run();
@@ -192,31 +332,41 @@ export const VenueCharts = memo(function VenueCharts() {
     setRange(next);
   };
 
-  // While a new range loads, the previous one stays on screen, dimmed, instead of emptying the cards.
+  // While a new range loads, the previous one stays on screen, dimmed, instead of emptying the charts.
   const loading = data != null && data.range !== range && error == null;
 
   return (
-    <section className="charts" aria-label="Series de venue" aria-busy={loading || data == null}>
-      <header className="chart-toolbar">
-        <h2>Series</h2>
-        <div className="segment" role="group" aria-label="Temporalidad">
+    <section aria-label="Series diarias" aria-busy={loading || data == null}>
+      <div className="panel-head">
+        <h2>Historia diaria, RISEx contra Txflow</h2>
+        <div className="seg" role="group" aria-label="Temporalidad">
           {CHART_RANGES.map((item) => (
-            <button key={item} type="button" aria-pressed={range === item} onClick={() => select(item)}>
+            <button key={item} type="button" aria-pressed={range === item} onClick={() => select(item)} title={RANGE_LABEL[item]}>
               {item}
             </button>
           ))}
         </div>
-      </header>
+      </div>
       {error ? (
-        <p className="banner">
-          {data && data.range !== range ? `${error} Se muestra ${data.range}.` : error}
+        <p className="banner" role="status">
+          {data && data.range !== range ? `${error} Se muestra ${RANGE_LABEL[data.range].toLowerCase()}.` : error}
         </p>
       ) : null}
-      <div className={loading ? "chart-grid is-loading" : "chart-grid"}>
-        <ChartFrame title="RISEx · volumen" series={data?.venues.risex.volume ?? null} />
-        <ChartFrame title="Txflow · volumen" series={data?.venues.txflow.volume ?? null} />
-        <ChartFrame title="RISEx · OI" series={data?.venues.risex.oi ?? null} />
-        <ChartFrame title="Txflow · OI" series={data?.venues.txflow.oi ?? null} />
+      <div className="series">
+        <Chart
+          title="Volumen diario, USDC"
+          unit="USDC"
+          rx={data?.venues.risex.volume ?? null}
+          tx={data?.venues.txflow.volume ?? null}
+          loading={loading}
+        />
+        <Chart
+          title="Interés abierto al cierre diario, USD"
+          unit="USD"
+          rx={data?.venues.risex.oi ?? null}
+          tx={data?.venues.txflow.oi ?? null}
+          loading={loading}
+        />
       </div>
     </section>
   );

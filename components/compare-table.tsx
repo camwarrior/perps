@@ -4,10 +4,13 @@ import { memo, useMemo, useState } from "react";
 
 import { Compact, Missing, Price, SignedPct } from "@/components/numbers";
 import { useFrozenOrder } from "@/components/use-frozen-order";
+import { formatPct } from "@/lib/format";
 import {
   compareRows,
   filterCompare,
+  fundingAprPct,
   lastSpreadPct,
+  sharePct,
   sortCompare,
   type CompareRow,
   type CompareSortKey,
@@ -15,88 +18,93 @@ import {
 } from "@/lib/market";
 import type { Market } from "@/lib/types";
 
-const COLUMNS: Array<{ key: CompareSortKey; label: string; group: string; width: number }> = [
-  { key: "base", label: "Símbolo", group: "", width: 104 },
-  { key: "rxLast", label: "Último", group: "RISEx", width: 112 },
-  { key: "rxPct", label: "Δ %", group: "RISEx", width: 76 },
-  { key: "rxVol", label: "Vol", group: "RISEx", width: 84 },
-  { key: "rxOi", label: "OI", group: "RISEx", width: 84 },
-  { key: "rxFund", label: "Fund.", group: "RISEx", width: 124 },
-  { key: "txLast", label: "Último", group: "Txflow", width: 112 },
-  { key: "txPct", label: "Δ %", group: "Txflow", width: 76 },
-  { key: "txVol", label: "Vol", group: "Txflow", width: 84 },
-  { key: "txOi", label: "OI", group: "Txflow", width: 84 },
-  { key: "txFund", label: "Fund.", group: "Txflow", width: 124 },
-  { key: "spread", label: "Δ último", group: "", width: 104 },
+type Venue = "rx" | "tx";
+type Column = { key: CompareSortKey | "share"; label: string; venue?: Venue; width: number; sort?: CompareSortKey; title: string };
+
+const COLUMNS: Column[] = [
+  { key: "base", label: "Símbolo", width: 104, sort: "base", title: "Activo base" },
+  { key: "rxLast", label: "RISEx", venue: "rx", width: 116, sort: "rxLast", title: "Último de RISEx, USDC" },
+  { key: "txLast", label: "Txflow", venue: "tx", width: 116, sort: "txLast", title: "Último de Txflow, USDC" },
+  { key: "spread", label: "Diferencia", width: 100, sort: "spread", title: "Txflow menos RISEx, en % del último de RISEx" },
+  { key: "rxPct", label: "RISEx", venue: "rx", width: 96, sort: "rxPct", title: "Cambio 24 h en RISEx" },
+  { key: "txPct", label: "Txflow", venue: "tx", width: 88, sort: "txPct", title: "Cambio 24 h en Txflow" },
+  { key: "share", label: "Reparto", width: 300, sort: "volume", title: "Volumen 24 h de cada venue y su parte del total del símbolo" },
+  { key: "rxFund", label: "RISEx", venue: "rx", width: 96, sort: "rxFund", title: "Funding de RISEx llevado a un año" },
+  { key: "txFund", label: "Txflow", venue: "tx", width: 88, sort: "txFund", title: "Funding de Txflow llevado a un año" },
 ];
 
-function Side({
-  market,
-  field,
-}: {
-  market: Market | null;
-  field: "last" | "pct" | "vol" | "oi" | "fund";
-}) {
-  if (!market) return <Missing />;
-  if (field === "last") return <Price value={market.last} />;
-  if (field === "pct") return <SignedPct value={market.changePct} />;
-  if (field === "vol") return <Compact value={market.volumeUsdc} unit="USDC" />;
-  if (field === "oi") return <Compact value={market.oiUsdc} unit="USDC" />;
+const GROUPS: Array<{ label: string; span: number; center?: boolean }> = [
+  { label: "", span: 1 },
+  { label: "Último precio", span: 3 },
+  { label: "Cambio 24 h", span: 2 },
+  { label: "Volumen 24 h", span: 1, center: true },
+  { label: "Funding, APR", span: 2 },
+];
+
+const TABLE_WIDTH = COLUMNS.reduce((sum, column) => sum + column.width, 0);
+
+function Apr({ market }: { market: Market | null }) {
+  if (!market) return <Missing title="No listado en este venue" />;
+  const apr = fundingAprPct(market.fundingPct, market.fundingInterval);
+  if (apr == null) return <Missing title="Sin funding o sin intervalo" />;
+  return <span className={`num ${apr > 0 ? "up" : apr < 0 ? "down" : "flat"}`}>{formatPct(apr, 1)}</span>;
+}
+
+function Share({ row }: { row: CompareRow }) {
+  const left = row.risex?.volumeUsdc ?? null;
+  const right = row.txflow?.volumeUsdc ?? null;
+  const share = sharePct(left, right);
   return (
-    <span className="fund">
-      <SignedPct value={market.fundingPct} digits={6} title="Funding del intervalo, en %" />
-      {market.fundingInterval ? <span className="interval">{market.fundingInterval}</span> : null}
+    <span className="share">
+      <Compact value={left} unit="USDC" />
+      {share == null ? (
+        <span className="share-bar empty" aria-hidden="true" />
+      ) : (
+        <span className="share-bar" role="img" aria-label={`RISEx ${share.toFixed(0)} %, Txflow ${(100 - share).toFixed(0)} %`}>
+          <span className="rx" style={{ width: `${share}%` }} />
+          <span className="tx" />
+        </span>
+      )}
+      <Compact value={right} unit="USDC" />
     </span>
   );
 }
 
-function cell(row: CompareRow, key: CompareSortKey) {
-  switch (key) {
-    case "base":
-      return <span className="sym">{row.base}</span>;
-    case "rxLast":
-      return <Side market={row.risex} field="last" />;
-    case "rxPct":
-      return <Side market={row.risex} field="pct" />;
-    case "rxVol":
-      return <Side market={row.risex} field="vol" />;
-    case "rxOi":
-      return <Side market={row.risex} field="oi" />;
-    case "rxFund":
-      return <Side market={row.risex} field="fund" />;
-    case "txLast":
-      return <Side market={row.txflow} field="last" />;
-    case "txPct":
-      return <Side market={row.txflow} field="pct" />;
-    case "txVol":
-      return <Side market={row.txflow} field="vol" />;
-    case "txOi":
-      return <Side market={row.txflow} field="oi" />;
-    case "txFund":
-      return <Side market={row.txflow} field="fund" />;
-    case "spread": {
-      const spread = lastSpreadPct(row.risex?.last ?? null, row.txflow?.last ?? null);
-      return <SignedPct value={spread} digits={4} title="Txflow menos RISEx, en % sobre el último de RISEx" />;
-    }
-    default:
-      return null;
-  }
-}
+const Row = memo(
+  function Row({ row }: { row: CompareRow }) {
+    const spread = lastSpreadPct(row.risex?.last ?? null, row.txflow?.last ?? null);
+    return (
+      <tr>
+        <td className="sticky left">
+          <span className="sym">{row.base}</span>
+        </td>
+        <td>{row.risex ? <Price value={row.risex.last} /> : <Missing />}</td>
+        <td>{row.txflow ? <Price value={row.txflow.last} /> : <Missing />}</td>
+        <td className="muted">
+          {spread == null ? <Missing /> : <span className="num" title="Txflow menos RISEx">{formatPct(spread, 3)}</span>}
+        </td>
+        <td>
+          <SignedPct value={row.risex?.changePct ?? null} />
+        </td>
+        <td>
+          <SignedPct value={row.txflow?.changePct ?? null} />
+        </td>
+        <td>
+          <Share row={row} />
+        </td>
+        <td>
+          <Apr market={row.risex} />
+        </td>
+        <td>
+          <Apr market={row.txflow} />
+        </td>
+      </tr>
+    );
+  },
+  (prev, next) => prev.row.risex === next.row.risex && prev.row.txflow === next.row.txflow,
+);
 
 const keyOfRow = (row: CompareRow) => row.base;
-const TABLE_WIDTH = COLUMNS.reduce((sum, column) => sum + column.width, 0);
-
-const Row = memo(function Row({ row }: { row: CompareRow }) {
-  return (
-    <tr>
-      {COLUMNS.map((column) => (
-        <td key={column.key} className={column.key === "base" ? "sticky" : "right"}>
-          {cell(row, column.key)}
-        </td>
-      ))}
-    </tr>
-  );
-}, (prev, next) => prev.row.risex === next.row.risex && prev.row.txflow === next.row.txflow);
 
 export const CompareTable = memo(function CompareTable({
   risex,
@@ -112,7 +120,7 @@ export const CompareTable = memo(function CompareTable({
   const [sort, setSort] = useState<{ key: CompareSortKey; dir: SortDir }>({ key: "volume", dir: "desc" });
   const filtered = useMemo(() => filterCompare(compareRows(risex, txflow), query), [risex, txflow, query]);
   const sorted = useMemo(() => {
-    const ordered = sortCompare(filtered, sort.key === "volume" ? "volume" : sort.key, sort.dir);
+    const ordered = sortCompare(filtered, sort.key, sort.dir);
     return limit == null ? ordered : ordered.slice(0, limit);
   }, [filtered, sort, limit]);
   const { rows, frozen, bind } = useFrozenOrder(sorted, keyOfRow);
@@ -126,21 +134,21 @@ export const CompareTable = memo(function CompareTable({
   };
 
   return (
-    <section className="book" aria-label="Comparación">
-      <div className="book-head">
-        <h3>Mismo símbolo</h3>
-        <p className="book-meta">
-          {rows.length} de {total}
-          {frozen ? " · orden en pausa" : ""}
+    <section aria-label="Mismo símbolo en los dos venues">
+      <div className="panel-head">
+        <h2>Mismo símbolo en los dos venues</h2>
+        <p className="panel-meta">
+          {rows.length} de {total} símbolos
+          {frozen ? ", orden en pausa mientras el mouse está encima" : ""}
         </p>
       </div>
       {rows.length === 0 ? (
-        <p className="empty">{query.trim() ? "Sin símbolos para ese filtro." : "Ningún símbolo en común."}</p>
+        <p className="empty">{query.trim() ? "Ningún símbolo coincide con esa búsqueda." : "No hay símbolos listados en ambos venues."}</p>
       ) : (
         <div className={limit == null ? "table-scroll is-all" : "table-scroll"}>
-          <table className="book-table" style={{ width: `${TABLE_WIDTH}px` }}>
+          <table className="book-table" style={{ width: "100%", minWidth: `${TABLE_WIDTH}px` }}>
             <caption className="sr-only">
-              Comparación RISEx contra Txflow. Vol y OI en USDC. Δ último es Txflow menos RISEx, en porcentaje.
+              RISEx contra Txflow. Volumen en USDC. Diferencia es Txflow menos RISEx, en porcentaje.
             </caption>
             <colgroup>
               {COLUMNS.map((column) => (
@@ -148,18 +156,31 @@ export const CompareTable = memo(function CompareTable({
               ))}
             </colgroup>
             <thead>
+              <tr className="groups">
+                {GROUPS.map((group, index) => (
+                  <th
+                    key={index}
+                    scope={group.label ? "colgroup" : undefined}
+                    colSpan={group.span}
+                    className={index === 0 ? "sticky" : group.center ? "center" : undefined}
+                  >
+                    <span>{group.label}</span>
+                  </th>
+                ))}
+              </tr>
               <tr>
                 {COLUMNS.map((column) => {
-                  const active = sort.key === column.key;
+                  const active = column.sort === sort.key;
                   return (
                     <th
                       key={column.key}
                       scope="col"
-                      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                      className={column.key === "base" ? "sticky" : undefined}
+                      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                      className={column.key === "base" ? "sticky" : column.key === "share" ? "center" : undefined}
+                      title={column.title}
                     >
-                      <button type="button" onClick={() => onSort(column.key)} title={column.group ? `${column.group} ${column.label}` : column.label}>
-                        {column.group ? <span className="col-group">{column.group}</span> : null}
+                      <button type="button" onClick={() => onSort(column.sort as CompareSortKey)}>
+                        {column.venue ? <span className={`swatch sm ${column.venue}`} aria-hidden="true" /> : null}
                         <span>{column.label}</span>
                         {active ? <i className={`sort-ind ${sort.dir}`} aria-hidden="true" /> : null}
                       </button>

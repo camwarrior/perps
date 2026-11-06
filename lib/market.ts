@@ -280,3 +280,26 @@ export function filterCompare(rows: CompareRow[], query: string): CompareRow[] {
   if (!needle) return rows;
   return rows.filter((row) => row.base.includes(needle));
 }
+
+/** Hours in a funding interval label such as "1h", "1.5h" or "30m". */
+export function intervalHours(label: string | null): number | null {
+  if (!label) return null;
+  const match = /^(\d+(?:\.\d+)?)\s*(h|m)$/i.exec(label.trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return match[2].toLowerCase() === "m" ? amount / 60 : amount;
+}
+
+/** Interval funding carried to a year, simple (not compounded), in percent. */
+export function fundingAprPct(fundingPct: number | null, interval: string | null): number | null {
+  const hours = intervalHours(interval);
+  if (fundingPct == null || hours == null) return null;
+  return fundingPct * (8760 / hours);
+}
+
+/** Share of the first value in the sum of both, in percent. Null unless both are present. */
+export function sharePct(left: number | null, right: number | null): number | null {
+  if (left == null || right == null || left < 0 || right < 0 || left + right === 0) return null;
+  return (left / (left + right)) * 100;
+}
