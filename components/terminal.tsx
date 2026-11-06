@@ -10,6 +10,7 @@ import { WalletWeek } from "@/components/wallet-week";
 import { useQuoteStream, useTickerBackfill } from "@/components/use-live";
 import { NowProvider, useNow } from "@/lib/now";
 import {
+  carryDailyFields,
   compareRows,
   decorateBook,
   filterCompare,
@@ -123,7 +124,13 @@ function Book({ initial }: { initial: Snapshot }) {
         const data = (await response.json()) as Snapshot;
         if (cancel) return;
         if (!data?.venues?.risex || !data?.venues?.txflow) throw new Error("payload");
-        setSnapshot(data);
+        setSnapshot((previous) => ({
+          ...data,
+          venues: {
+            risex: carryDailyFields(data.venues.risex, previous.venues.risex),
+            txflow: carryDailyFields(data.venues.txflow, previous.venues.txflow),
+          },
+        }));
         setAppliedAt(Date.now());
         setPollError(null);
       } catch {

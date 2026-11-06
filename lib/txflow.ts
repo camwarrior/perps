@@ -94,9 +94,41 @@ export async function loadMeta(): Promise<MetaInstrument[]> {
   return data;
 }
 
-async function loadWeb(): Promise<WebRow[]> {
-  const payload = await fetchJson(INFO_URL, infoInit({ type: "webData2", user: EMPTY_USER }));
-  return parseWebData(payload);
+/** Last good webData2, kept so one rate-limited poll does not blank 24 h volume on screen. */
+let webCache: { at: number; rows: WebRow[] } | null = null;
+const WEB_STALE_MS = 3 * 60 * 1000;
+
+async function loadWeb(): Promise<{ rows: WebRow[]; staleMs: number | null }> {
+  try {
+    const payload = await fetchJson(INFO_URL, { ...infoInit({ type: "webData2", user: EMPTY_USER }), retries: 1 });
+    const rows = parseWebData(payload);
+    webCache = { at: Date.now(), rows };
+    return { rows, staleMs: null };
+  } catch (error) {
+    const age = webCache ? Date.now() - webCache.at : Infinity;
+    if (webCache && age < WEB_STALE_MS) return { rows: webCache.rows, staleMs: age };
+    throw error;
+  }
+}
+
+/**
+ * Bases of the perpetuals that traded in the last 24 h, for the chart history.
+ * Txflow lists hundreds of perps; pulling candles for the idle ones only spends its rate limit.
+ * Falls back to every listed perp when webData2 is not available.
+ */
+export async function tradedCoins(): Promise<string[]> {
+  const meta = (await loadMeta()).filter((item) => !item.delisted && !item.halt);
+  let rows: WebRow[] | null = webCache && Date.now() - webCache.at < 60_000 ? webCache.rows : null;
+  if (!rows) {
+    try {
+      rows = (await loadWeb()).rows;
+    } catch {
+      rows = null;
+    }
+  }
+  if (!rows) return meta.map((item) => item.base);
+  const traded = new Set(rows.filter((row) => (row.volume ?? 0) > 0).map((row) => row.instrumentId));
+  return meta.filter((item) => traded.has(item.index)).map((item) => item.base);
 }
 
 async function fetchOneTicker(id: number): Promise<TickerRow> {
@@ -192,7 +224,8 @@ export async function fetchTxflow(): Promise<VenueBook> {
   ]);
 
   const meta = metaResult.status === "fulfilled" ? metaResult.value : null;
-  const web = webResult.status === "fulfilled" ? webResult.value : null;
+  const web = webResult.status === "fulfilled" ? webResult.value.rows : null;
+  const webStaleMs = webResult.status === "fulfilled" ? webResult.value.staleMs : null;
   const ctxs = ctxResult.status === "fulfilled" ? ctxResult.value : null;
   const notes: string[] = [];
 
@@ -215,6 +248,9 @@ export async function fetchTxflow(): Promise<VenueBook> {
     }
   }
   if (!web) notes.push("webData2 no respondió. Sin volumen ni máximo/mínimo 24h.");
+  if (webStaleMs != null) {
+    notes.push(`webData2 no respondió en este refresco: volumen y máximo/mínimo 24h son de hace ${Math.max(1, Math.round(webStaleMs / 1000))} s.`);
+  }
   if (!meta) notes.push("perpMeta no respondió. Símbolos tomados de webData2.");
 
   const assembled = assembleTxflow({ meta, web, ctxs, tickers });

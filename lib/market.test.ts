@@ -289,3 +289,20 @@ test("funding APR and venue share", async () => {
   assert.equal(sharePct(3, 1), 75);
   assert.equal(sharePct(null, 1), null);
 });
+
+test("a refresh without 24 h volume keeps the previous volume for a few minutes", async () => {
+  const { carryDailyFields } = await import("./market");
+  const base = { venue: "txflow" as const, id: "1", symbol: "BTC-USDC", base: "BTC", active: true, last: 100, mark: 100, index: 100, changeAbs: null, changePct: null, high: null, low: null, volumeUsdc: null, volumeBase: null, oiBase: 2, oiUsdc: 200, fundingPct: null, fundingInterval: null, funding8hPct: null, prevDayPx: null };
+  const book = (markets: Market[], fetchedAt: number) => ({ id: "txflow" as const, label: "Txflow", ok: true, error: null, fetchedAt, exchangeTime: null, source: "", notes: [], totals: { volume24hUsdc: null, openInterestUsdc: null, activeMarkets: 1, listedMarkets: 1 }, markets });
+  const previous = book([{ ...base, volumeUsdc: 5_000, high: 110, low: 90, prevDayPx: 95 }], 1_000);
+  const next = book([{ ...base, last: 101 }], 11_000);
+  const carried = carryDailyFields(next, previous);
+  assert.equal(carried.totals.volume24hUsdc, 5_000);
+  assert.equal(carried.markets[0].last, 101);
+  assert.equal(carried.markets[0].high, 110);
+  assert.ok(carried.notes.at(-1)?.includes("refresco anterior"));
+  assert.equal(carryDailyFields(book([{ ...base }], 400_000), previous).totals.volume24hUsdc, null);
+  // Carrying again from a carried book still expires three minutes after the real fetch.
+  assert.equal(carryDailyFields(book([{ ...base }], 170_000), carried).totals.volume24hUsdc, 5_000);
+  assert.equal(carryDailyFields(book([{ ...base }], 190_000), { ...carried, fetchedAt: 170_000 }).totals.volume24hUsdc, null);
+});
