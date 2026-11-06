@@ -1,3 +1,6 @@
+// Txflow retries with backoff can take a while on a busy minute.
+export const maxDuration = 60;
+
 import { getWalletWeek } from "@/lib/wallet";
 import { isWalletAddress } from "@/lib/wallet-types";
 
