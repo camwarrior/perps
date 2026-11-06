@@ -267,3 +267,13 @@ test("symbol base and compact USDC", () => {
   assert.equal(lastSpreadPct(100, 101), 1);
   assert.equal(lastSpreadPct(0, 1), null);
 });
+
+test("sub-cent prices keep four significant digits", async () => {
+  const { formatDelta, formatQty } = await import("./format");
+  assert.equal(formatPrice(0.0000123), "0.00001230");
+  assert.equal(formatPrice(0.18247), "0.18247");
+  assert.equal(formatDelta(-2.702e-7), "-0.00000027");
+  assert.equal(formatDelta(3153.14), "+3,153.14");
+  assert.equal(formatQty(336_784_138_971.05), "336.8B");
+  assert.equal(formatQty(3_039.52), "3,039.52");
+});
