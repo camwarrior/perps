@@ -277,3 +277,15 @@ test("sub-cent prices keep four significant digits", async () => {
   assert.equal(formatQty(336_784_138_971.05), "336.8B");
   assert.equal(formatQty(3_039.52), "3,039.52");
 });
+
+test("funding APR and venue share", async () => {
+  const { fundingAprPct, intervalHours, sharePct } = await import("./market");
+  assert.equal(intervalHours("1h"), 1);
+  assert.equal(intervalHours("30m"), 0.5);
+  assert.equal(intervalHours(null), null);
+  assert.ok(Math.abs((fundingAprPct(0.00062, "1h") ?? 0) - 5.4312) < 1e-9);
+  assert.ok(Math.abs((fundingAprPct(0.01, "8h") ?? 0) - 10.95) < 1e-9);
+  assert.equal(fundingAprPct(0.01, null), null);
+  assert.equal(sharePct(3, 1), 75);
+  assert.equal(sharePct(null, 1), null);
+});

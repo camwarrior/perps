@@ -20,9 +20,16 @@ export function formatSantiago(ms: number): string {
 
 export function formatAgo(from: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - from) / 1000));
-  if (seconds < 60) return `hace ${seconds}s`;
+  if (seconds < 60) return `hace ${seconds} s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `hace ${minutes}m`;
+  if (minutes < 60) return `hace ${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  return `hace ${hours}h ${minutes % 60}m`;
+  return `hace ${hours} h ${minutes % 60} min`;
+}
+
+/** "04:08:32", the wall clock in Santiago, for the header. */
+export function formatSantiagoClock(ms: number): string {
+  const parts = santiagoClock.formatToParts(new Date(ms));
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("hour")}:${pick("minute")}:${pick("second")}`;
 }

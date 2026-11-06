@@ -2,60 +2,90 @@
 
 import { memo, useMemo, useState } from "react";
 
-import { Compact, Price, Qty, SignedPct, SignedPrice } from "@/components/numbers";
+import { LiveCell } from "@/components/live-cell";
+import { Compact, Missing, Price, Qty, SignedPct } from "@/components/numbers";
 import { useFrozenOrder } from "@/components/use-frozen-order";
-import { filterMarkets, sortMarkets, type SortDir, type SortKey } from "@/lib/market";
+import { formatFull, formatPct, formatPrice } from "@/lib/format";
+import { filterMarkets, fundingAprPct, sortMarkets, type SortDir, type SortKey } from "@/lib/market";
 import type { Market, VenueId } from "@/lib/types";
 
-type Column = { key: SortKey; label: string; title: string; width: number; sticky?: boolean };
+type ColumnKey = "base" | "last" | "mark" | "changePct" | "range" | "volumeUsdc" | "oiUsdc" | "oiBase" | "fundingPct" | "apr";
 
-// Fixed widths, shared by both venues, so RISEx and Txflow columns line up on screen.
+type Column = {
+  key: ColumnKey;
+  label: string;
+  title: string;
+  width: number;
+  /** Sort key; columns without one are not sortable. */
+  sort?: SortKey;
+  align?: "left" | "right";
+};
+
+// Fixed widths shared by both venues, so switching venue keeps every column in place.
 const COLUMNS: Column[] = [
-  { key: "base", label: "Símbolo", title: "Par cotizado en USDC", width: 128, sticky: true },
-  { key: "last", label: "Último", title: "Último precio, USDC", width: 112 },
-  { key: "mark", label: "Mark", title: "Mark price, USDC", width: 112 },
-  { key: "index", label: "Índice", title: "Índice o oracle, USDC", width: 112 },
-  { key: "changeAbs", label: "Δ 24h", title: "Cambio absoluto 24h, USDC", width: 112 },
-  { key: "changePct", label: "Δ %", title: "Cambio 24h en porcentaje", width: 76 },
-  { key: "high", label: "Máx", title: "Máximo 24h, USDC", width: 112 },
-  { key: "low", label: "Mín", title: "Mínimo 24h, USDC", width: 112 },
-  { key: "volumeUsdc", label: "Vol 24h", title: "Volumen nocional 24h, USDC", width: 84 },
-  { key: "oiBase", label: "OI base", title: "Interés abierto en unidades del activo", width: 92 },
-  { key: "oiUsdc", label: "OI USDC", title: "Interés abierto nocional: base × mark, USDC", width: 84 },
-  { key: "fundingPct", label: "Funding", title: "Tasa del intervalo de funding, en porcentaje", width: 124 },
-  { key: "funding8hPct", label: "8h", title: "Tasa de funding a 8 horas, en porcentaje", width: 104 },
+  { key: "base", label: "Símbolo", title: "Par cotizado en USDC", width: 136, sort: "base", align: "left" },
+  { key: "last", label: "Último", title: "Último precio, USDC", width: 116, sort: "last" },
+  { key: "mark", label: "Mark", title: "Mark price, USDC. El índice u oracle aparece al pasar el mouse.", width: 116, sort: "mark" },
+  { key: "changePct", label: "24 h", title: "Cambio en 24 horas", width: 84, sort: "changePct" },
+  { key: "range", label: "Rango 24 h", title: "Mínimo, precio actual y máximo de 24 horas", width: 264, align: "left" },
+  { key: "volumeUsdc", label: "Volumen", title: "Volumen nocional 24 h, USDC", width: 96, sort: "volumeUsdc" },
+  { key: "oiUsdc", label: "OI USDC", title: "Interés abierto nocional: base × mark", width: 96, sort: "oiUsdc" },
+  { key: "oiBase", label: "OI base", title: "Interés abierto en unidades del activo", width: 96, sort: "oiBase" },
+  { key: "fundingPct", label: "Funding", title: "Tasa del intervalo de funding, en %", width: 128 },
+  { key: "apr", label: "APR", title: "Funding del intervalo llevado a un año, simple", width: 88, sort: "fundingPct" },
 ];
 
-function Cell({ column, market, indexLabel }: { column: SortKey; market: Market; indexLabel: string }) {
-  switch (column) {
-    case "base":
-      return (
-        <span className="sym" title={market.symbol}>
-          {market.symbol}
+const TABLE_WIDTH = COLUMNS.reduce((sum, column) => sum + column.width, 0);
+
+function Range({ market }: { market: Market }) {
+  const { low, high } = market;
+  const now = market.last ?? market.mark;
+  if (low == null || high == null || now == null || high <= low) return <Missing />;
+  const position = Math.min(100, Math.max(0, ((now - low) / (high - low)) * 100));
+  return (
+    <span className="range" title={`Mín ${formatFull(low, "USDC")}, máx ${formatFull(high, "USDC")}`}>
+      <span className="lo">{formatPrice(low)}</span>
+      <span className="range-track" aria-hidden="true">
+        <span className="range-mark" style={{ left: `${position}%` }} />
+      </span>
+      <span className="hi">{formatPrice(high)}</span>
+    </span>
+  );
+}
+
+const Row = memo(function Row({ market, indexLabel }: { market: Market; indexLabel: string }) {
+  const apr = fundingAprPct(market.fundingPct, market.fundingInterval);
+  const indexTitle = market.index == null ? `${indexLabel}: dato no disponible` : `${indexLabel}: ${formatFull(market.index, "USDC")}`;
+  return (
+    <tr>
+      <td className="sticky left c-base">
+        <span className="sym">{market.base}</span>
+        <span className="quote">{market.symbol.slice(market.base.length)}</span>
+      </td>
+      <LiveCell value={market.last} className="c-last">
+        <Price value={market.last} />
+      </LiveCell>
+      <LiveCell value={market.mark} className="muted c-extra">
+        <span title={indexTitle}>
+          <Price value={market.mark} />
         </span>
-      );
-    case "last":
-      return <Price value={market.last} />;
-    case "mark":
-      return <Price value={market.mark} />;
-    case "index":
-      return <Price value={market.index} unit={indexLabel === "Oracle" ? "USDC oracle" : "USDC índice"} />;
-    case "changeAbs":
-      return <SignedPrice value={market.changeAbs} />;
-    case "changePct":
-      return <SignedPct value={market.changePct} title="Cambio 24h" />;
-    case "high":
-      return <Price value={market.high} />;
-    case "low":
-      return <Price value={market.low} />;
-    case "volumeUsdc":
-      return <Compact value={market.volumeUsdc} unit="USDC" />;
-    case "oiBase":
-      return <Qty value={market.oiBase} unit={market.base} />;
-    case "oiUsdc":
-      return <Compact value={market.oiUsdc} unit="USDC" />;
-    case "fundingPct":
-      return (
+      </LiveCell>
+      <td className="c-pct">
+        <SignedPct value={market.changePct} title="Cambio 24 h" />
+      </td>
+      <td className="left c-extra">
+        <Range market={market} />
+      </td>
+      <td className="c-vol" data-label="Vol">
+        <Compact value={market.volumeUsdc} unit="USDC" />
+      </td>
+      <td className="c-oi" data-label="OI">
+        <Compact value={market.oiUsdc} unit="USDC" />
+      </td>
+      <td className="muted c-extra">
+        <Qty value={market.oiBase} unit={market.base} />
+      </td>
+      <td className="muted c-extra">
         <span className="fund">
           <SignedPct
             value={market.fundingPct}
@@ -63,42 +93,26 @@ function Cell({ column, market, indexLabel }: { column: SortKey; market: Market;
             title={
               market.venue === "risex"
                 ? "Tasa del intervalo. RISEx entrega una fracción; se muestra × 100, en %."
-                : "Tasa del intervalo de liquidación, en %. No es una tasa 8h."
+                : "Tasa del intervalo de liquidación, en %."
             }
           />
           {market.fundingInterval ? <span className="interval">{market.fundingInterval}</span> : null}
         </span>
-      );
-    case "funding8hPct":
-      return (
-        <SignedPct
-          value={market.funding8hPct}
-          digits={6}
-          title={
-            market.venue === "txflow"
-              ? "Txflow no publica tasa 8h. dato no disponible"
-              : "Tasa 8h publicada por RISEx, en %."
-          }
-        />
-      );
-    default:
-      return null;
-  }
-}
-
-const keyOfMarket = (market: Market) => `${market.venue}:${market.id}`;
-
-const Row = memo(function Row({ market, columns, indexLabel }: { market: Market; columns: Column[]; indexLabel: string }) {
-  return (
-    <tr>
-      {columns.map((column) => (
-        <td key={column.key} className={column.sticky ? "sticky" : "right"}>
-          <Cell column={column.key} market={market} indexLabel={indexLabel} />
-        </td>
-      ))}
+      </td>
+      <td className="c-extra">
+        {apr == null ? (
+          <Missing title="Sin intervalo de funding: no se anualiza." />
+        ) : (
+          <span className={`num ${apr > 0 ? "up" : apr < 0 ? "down" : "flat"}`} title={market.funding8hPct != null ? `8 h publicada: ${formatPct(market.funding8hPct, 6)}` : undefined}>
+            {formatPct(apr, 1)}
+          </span>
+        )}
+      </td>
     </tr>
   );
 });
+
+const keyOfMarket = (market: Market) => `${market.venue}:${market.id}`;
 
 export const MarketsTable = memo(function MarketsTable({
   title,
@@ -116,8 +130,6 @@ export const MarketsTable = memo(function MarketsTable({
   venue: VenueId;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "volumeUsdc", dir: "desc" });
-  // Txflow does not publish an 8h rate: the column would be "—" on every row.
-  const columns = useMemo(() => (venue === "txflow" ? COLUMNS.filter((column) => column.key !== "funding8hPct") : COLUMNS), [venue]);
   const filtered = useMemo(() => filterMarkets(markets, query), [markets, query]);
   const sorted = useMemo(() => {
     const ordered = sortMarkets(filtered, sort.key, sort.dir);
@@ -125,7 +137,6 @@ export const MarketsTable = memo(function MarketsTable({
   }, [filtered, sort, limit]);
   const { rows, frozen, bind } = useFrozenOrder(sorted, keyOfMarket);
   const total = filtered.length;
-  const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
 
   const onSort = (key: SortKey) => {
     setSort((prev) => {
@@ -135,44 +146,50 @@ export const MarketsTable = memo(function MarketsTable({
   };
 
   return (
-    <section className="book" aria-label={title}>
-      <div className="book-head">
-        <h3>{title}</h3>
-        <p className="book-meta">
-          {rows.length} de {total}
-          {limit != null && total > limit ? " · top por el orden actual" : ""}
-          {frozen ? " · orden en pausa" : ""}
+    <section aria-label={title}>
+      <div className="panel-head">
+        <h2>
+          <span className={`swatch sm ${venue === "risex" ? "rx" : "tx"}`} aria-hidden="true" /> {title}
+        </h2>
+        <p className="panel-meta">
+          {rows.length} de {total} mercados
+          {frozen ? ", orden en pausa mientras el mouse está encima" : ""}
         </p>
       </div>
       {rows.length === 0 ? (
-        <p className="empty">{query.trim() ? "Sin mercados para ese filtro." : "Sin mercados activos."}</p>
+        <p className="empty">{query.trim() ? "Ningún mercado coincide con ese símbolo." : "Este venue no tiene mercados activos."}</p>
       ) : (
-        <div className={limit == null ? "table-scroll is-all" : "table-scroll"}>
-          <table className="book-table" style={{ width: `${tableWidth}px` }}>
+        <div className={limit == null ? "table-scroll as-list is-all" : "table-scroll as-list"}>
+          <table className="book-table" style={{ width: "100%", minWidth: `${TABLE_WIDTH}px` }}>
             <caption className="sr-only">
               {title}. Precios y volumen en USDC. OI base en unidades del activo. OI USDC es base por mark.
             </caption>
             <colgroup>
-              {columns.map((column) => (
+              {COLUMNS.map((column) => (
                 <col key={column.key} style={{ width: `${column.width}px` }} />
               ))}
             </colgroup>
             <thead>
               <tr>
-                {columns.map((column) => {
-                  const label = column.key === "index" ? indexLabel : column.label;
-                  const active = sort.key === column.key;
+                {COLUMNS.map((column) => {
+                  const active = column.sort != null && sort.key === column.sort && column.key !== "fundingPct";
+                  const className = [column.key === "base" ? "sticky" : "", column.align === "left" ? "left" : ""].filter(Boolean).join(" ");
                   return (
                     <th
                       key={column.key}
                       scope="col"
-                      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                      className={column.sticky ? "sticky" : undefined}
+                      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                      className={className || undefined}
+                      title={column.title}
                     >
-                      <button type="button" onClick={() => onSort(column.key)} title={column.title}>
-                        <span>{label}</span>
-                        {active ? <i className={`sort-ind ${sort.dir}`} aria-hidden="true" /> : null}
-                      </button>
+                      {column.sort ? (
+                        <button type="button" onClick={() => onSort(column.sort as SortKey)}>
+                          <span>{column.label}</span>
+                          {active ? <i className={`sort-ind ${sort.dir}`} aria-hidden="true" /> : null}
+                        </button>
+                      ) : (
+                        <span>{column.label}</span>
+                      )}
                     </th>
                   );
                 })}
@@ -180,7 +197,7 @@ export const MarketsTable = memo(function MarketsTable({
             </thead>
             <tbody {...bind}>
               {rows.map((market) => (
-                <Row key={keyOfMarket(market)} market={market} columns={columns} indexLabel={indexLabel} />
+                <Row key={keyOfMarket(market)} market={market} indexLabel={indexLabel} />
               ))}
             </tbody>
           </table>
