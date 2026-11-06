@@ -26,17 +26,29 @@ async function pool(items, n, fn) {
   return out;
 }
 
-// DefiLlama
-async function llama(slug) {
-  for (const path of [`summary/derivatives/${slug}`, `summary/perps/${slug}`]) {
+// DefiLlama: the per-protocol summary is paid now, so try the free overview endpoints with a breakdown.
+let overview = null;
+async function loadOverview() {
+  if (overview) return overview;
+  for (const path of ["overview/derivatives", "overview/perps", "overview/derivatives?dataType=dailyVolume"]) {
+    const url = `https://api.llama.fi/${path}${path.includes("?") ? "&" : "?"}excludeTotalDataChart=true&excludeTotalDataChartBreakdown=false`;
     try {
-      const j = await get(`https://api.llama.fi/${path}?excludeTotalDataChartBreakdown=true`);
-      const chart = j.totalDataChart || [];
-      console.log(`DefiLlama ${path}: name=${j.name} total24h=${fmt(j.total24h)} points=${chart.length} last=${chart.length ? day(chart.at(-1)[0] * 1000) : "—"}`);
-      return new Map(chart.map(([s, v]) => [s * 1000, Number(v)]));
+      const j = await get(url);
+      const rows = j.totalDataChartBreakdown || [];
+      console.log(`DefiLlama ${path}: breakdown days=${rows.length}${rows.length ? " last=" + day(rows.at(-1)[0] * 1000) : ""}`);
+      if (!rows.length) continue;
+      const names = new Set(); for (const [, book] of rows.slice(-5)) for (const k of Object.keys(book || {})) names.add(k);
+      console.log("  names like rise/tx:", [...names].filter((n) => /rise|tx ?flow/i.test(n)).join(" | "));
+      overview = rows; return rows;
     } catch (e) { console.log(`DefiLlama ${path}: ${e.message.slice(0, 160)}`); }
   }
-  return new Map();
+  return [];
+}
+async function llama(pattern) {
+  const rows = await loadOverview();
+  const out = new Map();
+  for (const [s, book] of rows) for (const [k, v] of Object.entries(book || {})) if (pattern.test(k)) out.set(s * 1000, (out.get(s * 1000) || 0) + Number(v));
+  return out;
 }
 
 // RISEx candles, every active market
@@ -106,7 +118,7 @@ function compare(name, ll, candles) {
   }
 }
 
-const [llR, llT] = [await llama("risex"), await llama("txflow-perps")];
+const [llR, llT] = [await llama(/^risex$/i), await llama(/^tx ?flow perps$/i)];
 const rx = await risex();
 compare("RISEx", llR, rx);
 const tx = await txflow();
