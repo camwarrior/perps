@@ -115,6 +115,8 @@ async function loadWeb(): Promise<{ rows: WebRow[]; staleMs: number | null }> {
 export type TradedCoinSet = {
   coins: string[];
   capped: boolean;
+  /** Perps with volume in the last 24 h, before the safety cap. */
+  traded: number;
   /** Share of 24h notional included, or null when webData2 never arrived. */
   coverage: number | null;
   /** No volume book at all, including a stale one. Callers must not walk the listed universe. */
@@ -136,7 +138,7 @@ export async function tradedCoins(): Promise<TradedCoinSet> {
       rows = webCache?.rows ?? null;
     }
   }
-  if (!rows) return { coins: [], capped: false, coverage: null, unavailable: true };
+  if (!rows) return { coins: [], capped: false, coverage: null, traded: 0, unavailable: true };
   const picked = pickTxflowCoins(meta, rows);
   return { ...picked, unavailable: false };
 }

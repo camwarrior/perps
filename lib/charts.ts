@@ -216,9 +216,10 @@ async function pullTxHistory(fromMs: number): Promise<CandleHistory> {
   }
   const coins = selection.coins;
   const pct = selection.coverage == null ? null : Math.round(selection.coverage * 100);
-  const scopeNote =
-    selection.capped && pct != null
-      ? `Suma de los ${coins.length} perpetuos de mayor volumen en 24 h (${pct}% de ese notional).`
+  const scopeNote = selection.capped
+    ? `Suma de los ${coins.length} de ${selection.traded} perpetuos con volumen en 24 h${pct != null ? ` (${pct}% de ese notional)` : ""}.`
+    : coins.length > 0
+      ? `Son ${coins.length} perpetuos.`
       : null;
   if (coins.length === 0) {
     return { at, checkedAt: at, fromMs, points: [], failed: 0, total: 0, error: null, staleError: null, scopeNote };
