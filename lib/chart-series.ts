@@ -95,9 +95,12 @@ export function historyStart(range: ChartRange, now: number): number {
 }
 
 /**
- * Safety stop only: a broken volume book must never turn into a candle request per listed perp.
- * Every perp that traded in the last 24 h is included below it, so the series adds up to the venue.
+ * Txflow reports some 24 h volume on almost every listed perp, so "traded" alone means ~240
+ * candle requests per window. Perps are taken largest first until this share of 24 h notional
+ * is covered: the tail past it is dust and only spends the rate limit.
  */
+export const TXFLOW_COVERAGE = 0.995;
+/** Hard stop in case the volume book is broken. */
 export const TXFLOW_CANDLE_CAP = 200;
 
 export type TxCoin = { index: number; base: string };
@@ -123,8 +126,14 @@ export function pickTxflowCoins(
     .toSorted((a, b) => b.volume - a.volume || a.base.localeCompare(b.base));
   if (ranked.length === 0) return { coins: [], capped: false, coverage: 0, traded: 0 };
   const total = ranked.reduce((sum, item) => sum + item.volume, 0);
-  const kept = ranked.slice(0, TXFLOW_CANDLE_CAP);
-  const covered = kept.reduce((sum, item) => sum + item.volume, 0);
+  const kept: typeof ranked = [];
+  let covered = 0;
+  for (const item of ranked) {
+    if (kept.length >= TXFLOW_CANDLE_CAP) break;
+    kept.push(item);
+    covered += item.volume;
+    if (total > 0 && covered / total >= TXFLOW_COVERAGE) break;
+  }
   return {
     coins: kept.map((item) => item.base),
     capped: kept.length < ranked.length,

@@ -215,11 +215,12 @@ async function pullTxHistory(fromMs: number): Promise<CandleHistory> {
     };
   }
   const coins = selection.coins;
-  const pct = selection.coverage == null ? null : Math.round(selection.coverage * 100);
+  // One decimal, floored, so 99.96 % reads 99,9 % and never rounds up to a full 100 %.
+  const pct = selection.coverage == null ? null : (Math.floor(selection.coverage * 1000) / 10).toFixed(1).replace(".", ",");
   const scopeNote = selection.capped
-    ? `Suma de los ${coins.length} de ${selection.traded} perpetuos con volumen en 24 h${pct != null ? ` (${pct}% de ese notional)` : ""}.`
+    ? `Suma de los ${coins.length} de ${selection.traded} perpetuos con volumen en 24 h, que son el ${pct ?? "—"} % de ese notional; el resto es marginal.`
     : coins.length > 0
-      ? `Son ${coins.length} perpetuos.`
+      ? `Son los ${coins.length} perpetuos con volumen en 24 h.`
       : null;
   if (coins.length === 0) {
     return { at, checkedAt: at, fromMs, points: [], failed: 0, total: 0, error: null, staleError: null, scopeNote };
