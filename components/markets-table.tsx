@@ -1,25 +1,29 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 
 import { Compact, Price, Qty, SignedPct, SignedPrice } from "@/components/numbers";
+import { useFrozenOrder } from "@/components/use-frozen-order";
 import { filterMarkets, sortMarkets, type SortDir, type SortKey } from "@/lib/market";
 import type { Market, VenueId } from "@/lib/types";
 
-const COLUMNS: Array<{ key: SortKey; label: string; title: string; sticky?: boolean }> = [
-  { key: "base", label: "Símbolo", title: "Par cotizado en USDC", sticky: true },
-  { key: "last", label: "Último", title: "Último precio, USDC" },
-  { key: "mark", label: "Mark", title: "Mark price, USDC" },
-  { key: "index", label: "Índice", title: "Índice o oracle, USDC" },
-  { key: "changeAbs", label: "Δ 24h", title: "Cambio absoluto 24h, USDC" },
-  { key: "changePct", label: "Δ %", title: "Cambio 24h en porcentaje" },
-  { key: "high", label: "Máx", title: "Máximo 24h, USDC" },
-  { key: "low", label: "Mín", title: "Mínimo 24h, USDC" },
-  { key: "volumeUsdc", label: "Vol 24h", title: "Volumen nocional 24h, USDC" },
-  { key: "oiBase", label: "OI base", title: "Interés abierto en unidades del activo" },
-  { key: "oiUsdc", label: "OI USDC", title: "Interés abierto nocional: base × mark, USDC" },
-  { key: "fundingPct", label: "Funding", title: "Tasa del intervalo de funding, en porcentaje" },
-  { key: "funding8hPct", label: "8h", title: "Tasa de funding a 8 horas, en porcentaje" },
+type Column = { key: SortKey; label: string; title: string; width: number; sticky?: boolean };
+
+// Fixed widths, shared by both venues, so RISEx and Txflow columns line up on screen.
+const COLUMNS: Column[] = [
+  { key: "base", label: "Símbolo", title: "Par cotizado en USDC", width: 128, sticky: true },
+  { key: "last", label: "Último", title: "Último precio, USDC", width: 112 },
+  { key: "mark", label: "Mark", title: "Mark price, USDC", width: 112 },
+  { key: "index", label: "Índice", title: "Índice o oracle, USDC", width: 112 },
+  { key: "changeAbs", label: "Δ 24h", title: "Cambio absoluto 24h, USDC", width: 112 },
+  { key: "changePct", label: "Δ %", title: "Cambio 24h en porcentaje", width: 76 },
+  { key: "high", label: "Máx", title: "Máximo 24h, USDC", width: 112 },
+  { key: "low", label: "Mín", title: "Mínimo 24h, USDC", width: 112 },
+  { key: "volumeUsdc", label: "Vol 24h", title: "Volumen nocional 24h, USDC", width: 84 },
+  { key: "oiBase", label: "OI base", title: "Interés abierto en unidades del activo", width: 92 },
+  { key: "oiUsdc", label: "OI USDC", title: "Interés abierto nocional: base × mark, USDC", width: 84 },
+  { key: "fundingPct", label: "Funding", title: "Tasa del intervalo de funding, en porcentaje", width: 124 },
+  { key: "funding8hPct", label: "8h", title: "Tasa de funding a 8 horas, en porcentaje", width: 104 },
 ];
 
 function Cell({ column, market, indexLabel }: { column: SortKey; market: Market; indexLabel: string }) {
@@ -82,7 +86,21 @@ function Cell({ column, market, indexLabel }: { column: SortKey; market: Market;
   }
 }
 
-export function MarketsTable({
+const keyOfMarket = (market: Market) => `${market.venue}:${market.id}`;
+
+const Row = memo(function Row({ market, columns, indexLabel }: { market: Market; columns: Column[]; indexLabel: string }) {
+  return (
+    <tr>
+      {columns.map((column) => (
+        <td key={column.key} className={column.sticky ? "sticky" : "right"}>
+          <Cell column={column.key} market={market} indexLabel={indexLabel} />
+        </td>
+      ))}
+    </tr>
+  );
+});
+
+export const MarketsTable = memo(function MarketsTable({
   title,
   markets,
   indexLabel,
@@ -98,12 +116,16 @@ export function MarketsTable({
   venue: VenueId;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "volumeUsdc", dir: "desc" });
-  const rows = useMemo(() => {
-    const filtered = filterMarkets(markets, query);
-    const sorted = sortMarkets(filtered, sort.key, sort.dir);
-    return limit == null ? sorted : sorted.slice(0, limit);
-  }, [markets, query, sort, limit]);
-  const total = useMemo(() => filterMarkets(markets, query).length, [markets, query]);
+  // Txflow does not publish an 8h rate: the column would be "—" on every row.
+  const columns = useMemo(() => (venue === "txflow" ? COLUMNS.filter((column) => column.key !== "funding8hPct") : COLUMNS), [venue]);
+  const filtered = useMemo(() => filterMarkets(markets, query), [markets, query]);
+  const sorted = useMemo(() => {
+    const ordered = sortMarkets(filtered, sort.key, sort.dir);
+    return limit == null ? ordered : ordered.slice(0, limit);
+  }, [filtered, sort, limit]);
+  const { rows, frozen, bind } = useFrozenOrder(sorted, keyOfMarket);
+  const total = filtered.length;
+  const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
 
   const onSort = (key: SortKey) => {
     setSort((prev) => {
@@ -119,19 +141,25 @@ export function MarketsTable({
         <p className="book-meta">
           {rows.length} de {total}
           {limit != null && total > limit ? " · top por el orden actual" : ""}
+          {frozen ? " · orden en pausa" : ""}
         </p>
       </div>
       {rows.length === 0 ? (
         <p className="empty">{query.trim() ? "Sin mercados para ese filtro." : "Sin mercados activos."}</p>
       ) : (
         <div className={limit == null ? "table-scroll is-all" : "table-scroll"}>
-          <table className="book-table">
+          <table className="book-table" style={{ width: `${tableWidth}px` }}>
             <caption className="sr-only">
               {title}. Precios y volumen en USDC. OI base en unidades del activo. OI USDC es base por mark.
             </caption>
+            <colgroup>
+              {columns.map((column) => (
+                <col key={column.key} style={{ width: `${column.width}px` }} />
+              ))}
+            </colgroup>
             <thead>
               <tr>
-                {COLUMNS.map((column) => {
+                {columns.map((column) => {
                   const label = column.key === "index" ? indexLabel : column.label;
                   const active = sort.key === column.key;
                   return (
@@ -150,15 +178,9 @@ export function MarketsTable({
                 })}
               </tr>
             </thead>
-            <tbody>
+            <tbody {...bind}>
               {rows.map((market) => (
-                <tr key={`${venue}:${market.id}`}>
-                  {COLUMNS.map((column) => (
-                    <td key={column.key} className={column.sticky ? "sticky" : column.key === "base" ? undefined : "right"}>
-                      <Cell column={column.key} market={market} indexLabel={indexLabel} />
-                    </td>
-                  ))}
-                </tr>
+                <Row key={keyOfMarket(market)} market={market} columns={columns} indexLabel={indexLabel} />
               ))}
             </tbody>
           </table>
@@ -166,4 +188,4 @@ export function MarketsTable({
       )}
     </section>
   );
-}
+});
