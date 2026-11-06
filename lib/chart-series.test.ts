@@ -103,9 +103,9 @@ test("a deeper failure is served as itself and the shorter clean history stays s
   assert.equal(settled.served.points[0]?.t, 10);
 });
 
-test("Txflow candles use traded markets and never the whole book", () => {
+test("Txflow candles use every traded market and never the whole book", () => {
   const meta = Array.from({ length: 241 }, (_, index) => ({ index, base: `C${index}` }));
-  assert.deepEqual(pickTxflowCoins(meta, null), { coins: [], capped: false, coverage: null });
+  assert.deepEqual(pickTxflowCoins(meta, null), { coins: [], capped: false, coverage: null, traded: 0 });
   const rows = [
     { instrumentId: 0, volume: 0 },
     { instrumentId: 1, volume: 90 },
@@ -113,13 +113,16 @@ test("Txflow candles use traded markets and never the whole book", () => {
     { instrumentId: 3, volume: 1 },
   ];
   const picked = pickTxflowCoins(meta, rows);
-  assert.deepEqual(picked.coins, ["C1", "C2"]);
-  assert.equal(picked.capped, true);
-  assert.ok((picked.coverage ?? 0) >= 0.98);
-  const flat = Array.from({ length: 80 }, (_, index) => ({ instrumentId: index, volume: 1 }));
+  // The 1 % tail is kept: the series has to add up to the venue's volume.
+  assert.deepEqual(picked.coins, ["C1", "C2", "C3"]);
+  assert.equal(picked.capped, false);
+  assert.equal(picked.coverage, 1);
+  assert.equal(picked.traded, 3);
+  const flat = Array.from({ length: 241 }, (_, index) => ({ instrumentId: index, volume: 1 }));
   const capped = pickTxflowCoins(meta, flat);
   assert.equal(capped.coins.length, TXFLOW_CANDLE_CAP);
   assert.equal(capped.capped, true);
+  assert.equal(capped.traded, 241);
   assert.equal(capped.coins[0], "C0");
 });
 

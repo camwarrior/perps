@@ -94,23 +94,24 @@ export function historyStart(range: ChartRange, now: number): number {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
-/** Hard stop so a missing volume book can never turn into a candle request per listed perp. */
-export const TXFLOW_CANDLE_CAP = 40;
-/** Stop once this share of 24h notional is included. The tail is dust next to the cap. */
-const TXFLOW_COVERAGE = 0.98;
+/**
+ * Safety stop only: a broken volume book must never turn into a candle request per listed perp.
+ * Every perp that traded in the last 24 h is included below it, so the series adds up to the venue.
+ */
+export const TXFLOW_CANDLE_CAP = 200;
 
 export type TxCoin = { index: number; base: string };
 export type TxVolumeRow = { instrumentId: number; volume: number | null };
 
 /**
- * Perps worth a candle request: traded in the last 24h, largest first, capped.
+ * Perps worth a candle request: every one that traded in the last 24 h, largest first.
  * `rows === null` means volume is unknown. That is an empty set, never the whole book.
  */
 export function pickTxflowCoins(
   meta: TxCoin[],
   rows: TxVolumeRow[] | null,
-): { coins: string[]; capped: boolean; coverage: number | null } {
-  if (!rows) return { coins: [], capped: false, coverage: null };
+): { coins: string[]; capped: boolean; coverage: number | null; traded: number } {
+  if (!rows) return { coins: [], capped: false, coverage: null, traded: 0 };
   const volumeById = new Map<number, number>();
   for (const row of rows) {
     const volume = row.volume ?? 0;
@@ -120,17 +121,16 @@ export function pickTxflowCoins(
     .map((item) => ({ base: item.base, volume: volumeById.get(item.index) ?? 0 }))
     .filter((item) => item.volume > 0)
     .toSorted((a, b) => b.volume - a.volume || a.base.localeCompare(b.base));
-  if (ranked.length === 0) return { coins: [], capped: false, coverage: 0 };
+  if (ranked.length === 0) return { coins: [], capped: false, coverage: 0, traded: 0 };
   const total = ranked.reduce((sum, item) => sum + item.volume, 0);
-  const coins: string[] = [];
-  let covered = 0;
-  for (const item of ranked) {
-    if (coins.length >= TXFLOW_CANDLE_CAP) break;
-    coins.push(item.base);
-    covered += item.volume;
-    if (total > 0 && covered / total >= TXFLOW_COVERAGE) break;
-  }
-  return { coins, capped: coins.length < ranked.length, coverage: total > 0 ? covered / total : 0 };
+  const kept = ranked.slice(0, TXFLOW_CANDLE_CAP);
+  const covered = kept.reduce((sum, item) => sum + item.volume, 0);
+  return {
+    coins: kept.map((item) => item.base),
+    capped: kept.length < ranked.length,
+    coverage: total > 0 ? covered / total : 0,
+    traded: ranked.length,
+  };
 }
 
 /** A venue history assembled from per-market daily candles. */

@@ -1,3 +1,6 @@
+// A cold pull walks every traded perp three at a time; leave room for Txflow's backoff.
+export const maxDuration = 60;
+
 import { getCharts } from "@/lib/charts";
 import { chartResponseCache, isChartRange } from "@/lib/chart-series";
 
