@@ -43,6 +43,8 @@ export type VenueBook = {
   exchangeTime: number | null;
   source: string;
   notes: string[];
+  /** When the 24 h fields were obtained, if they were carried from an earlier refresh. */
+  dailyFetchedAt?: number;
   totals: VenueTotals;
   markets: Market[];
 };

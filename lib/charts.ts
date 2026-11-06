@@ -15,7 +15,7 @@ import {
 } from "@/lib/chart-series";
 import { fetchJson } from "@/lib/http";
 import { asArray, asRecord, asString, parseNumber, publicError } from "@/lib/number";
-import { loadMeta } from "@/lib/txflow";
+import { tradedCoins } from "@/lib/txflow";
 
 const RISE_MARKETS = "https://api.rise.trade/v1/markets";
 const TX_INFO = "https://rpc.txflow.com/info";
@@ -174,8 +174,8 @@ function readTxBars(payload: unknown): ChartPoint[] {
 }
 
 async function pullTxHistory(): Promise<History> {
-  // Same cached perpMeta as the live book, so the charts do not spend Txflow's rate limit on it.
-  const coins = (await loadMeta()).filter((item) => !item.delisted && !item.halt).map((item) => item.base);
+  // Only perps that traded in the last 24 h, from the live book's cached perpMeta and webData2.
+  const coins = await tradedCoins();
   const endMs = Date.now();
   // Txflow answers 429 to bursts: three at a time, each retried with backoff.
   const bars = await mapPool(coins, 3, async (coin) => {
@@ -234,7 +234,7 @@ async function riseVolume(range: ChartRange, now: number): Promise<ChartSeries> 
 
 async function txVolume(range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "POST /info candleSnapshot";
-  const note = "Notional USDC estimado: volumen base × cierre, sumado entre perpetuos. Cada barra es un día UTC. La última puede ir incompleta.";
+  const note = "Notional USDC estimado: volumen base × cierre, sumado entre los perpetuos con volumen en 24 h. Cada barra es un día UTC. La última puede ir incompleta.";
   return volumeSeries("Txflow", await loadHistory("txflow", pullTxHistory), range, now, source, note);
 }
 

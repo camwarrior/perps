@@ -303,3 +303,38 @@ export function sharePct(left: number | null, right: number | null): number | nu
   if (left == null || right == null || left < 0 || right < 0 || left + right === 0) return null;
   return (left / (left + right)) * 100;
 }
+
+/**
+ * When a refresh comes back without any 24 h volume (the venue rate-limited that payload)
+ * but the previous book had it, keep the previous 24 h fields for a few minutes instead of
+ * blanking them. Prices and OI still come from the new book.
+ */
+export function carryDailyFields(next: VenueBook, previous: VenueBook | null, maxAgeMs = 3 * 60 * 1000): VenueBook {
+  if (!next.ok || !previous?.ok || previous.fetchedAt == null || next.fetchedAt == null) return next;
+  // Measured from when the carried fields were really fetched, so carrying never chains past maxAgeMs.
+  const origin = previous.dailyFetchedAt ?? previous.fetchedAt;
+  if (next.fetchedAt - origin > maxAgeMs) return next;
+  if (next.markets.some((market) => market.volumeUsdc != null)) return next;
+  const before = new Map(previous.markets.map((market) => [market.id, market]));
+  if (![...before.values()].some((market) => market.volumeUsdc != null)) return next;
+  const markets = next.markets.map((market) => {
+    const old = before.get(market.id);
+    if (!old) return market;
+    return derive({
+      ...market,
+      volumeUsdc: market.volumeUsdc ?? old.volumeUsdc,
+      volumeBase: market.volumeBase ?? old.volumeBase,
+      high: market.high ?? old.high,
+      low: market.low ?? old.low,
+      prevDayPx: market.prevDayPx ?? old.prevDayPx,
+    });
+  });
+  const note = `Volumen y máximo/mínimo 24h del refresco anterior: ${next.label} no los entregó en este.`;
+  return {
+    ...next,
+    markets,
+    dailyFetchedAt: origin,
+    totals: summarize(markets),
+    notes: [...next.notes.filter((item) => !item.startsWith("webData2 no respondió. Sin volumen")), note],
+  };
+}
