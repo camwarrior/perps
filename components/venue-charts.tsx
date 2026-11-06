@@ -74,6 +74,9 @@ function Chart({
 }) {
   const [ref, size] = useSize<SVGSVGElement>();
   const [hover, setHover] = useState<number | null>(null);
+  // A tap pins the tooltip until another tap on the same day, or a tap outside the chart.
+  const [pinned, setPinned] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const days = useMemo(() => mergeDays(rx, tx), [rx, tx]);
   const pending = rx == null && tx == null;
   const asBars = days.length <= MAX_BARS;
@@ -108,13 +111,49 @@ function Chart({
     return d;
   };
 
-  const pick = (event: PointerEvent<SVGSVGElement>) => {
-    if (!days.length || band === 0) return;
+  const indexAt = (event: PointerEvent<SVGSVGElement>): number | null => {
+    if (!days.length || band === 0) return null;
     const box = event.currentTarget.getBoundingClientRect();
     const index = Math.floor((event.clientX - box.left - MARGIN.left) / band);
-    const clamped = Math.min(days.length - 1, Math.max(0, index));
-    setHover((prev) => (prev === clamped ? prev : clamped));
+    return Math.min(days.length - 1, Math.max(0, index));
   };
+
+  // Mouse: the tooltip follows the pointer and leaves with it.
+  const onMove = (event: PointerEvent<SVGSVGElement>) => {
+    if (event.pointerType !== "mouse" || pinned) return;
+    const index = indexAt(event);
+    setHover((prev) => (prev === index ? prev : index));
+  };
+
+  const onLeave = (event: PointerEvent<SVGSVGElement>) => {
+    if (event.pointerType === "mouse" && !pinned) setHover(null);
+  };
+
+  // Finger or pen: a tap pins that day, a tap on another day moves it, a tap on the same day closes it.
+  // A swipe to scroll ends in pointercancel, not pointerup, so scrolling never opens it.
+  const onUp = (event: PointerEvent<SVGSVGElement>) => {
+    if (event.pointerType === "mouse") return;
+    const index = indexAt(event);
+    if (index == null) return;
+    if (pinned && hover === index) {
+      setPinned(false);
+      setHover(null);
+      return;
+    }
+    setPinned(true);
+    setHover(index);
+  };
+
+  useEffect(() => {
+    if (!pinned) return;
+    const close = (event: Event) => {
+      if (bodyRef.current?.contains(event.target as Node)) return;
+      setPinned(false);
+      setHover(null);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [pinned]);
 
   const active = hover == null ? null : days[hover];
   const tipLeft = hover == null ? 0 : Math.min(Math.max(xMid(hover) - 90, 0), Math.max(0, size.width - 190));
@@ -149,14 +188,14 @@ function Chart({
           </li>
         </ul>
       </header>
-      <div className={loading ? "chart-body is-loading" : "chart-body"}>
+      <div ref={bodyRef} className={loading ? "chart-body is-loading" : "chart-body"}>
         <svg
           ref={ref}
           role="img"
           aria-label={`${title}. ${days.length} días. Detalle en la tabla de datos.`}
-          onPointerMove={pick}
-          onPointerDown={pick}
-          onPointerLeave={() => setHover(null)}
+          onPointerMove={onMove}
+          onPointerLeave={onLeave}
+          onPointerUp={onUp}
         >
           {size.width > 0 ? (
             <>
