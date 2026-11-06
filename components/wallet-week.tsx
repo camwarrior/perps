@@ -9,18 +9,26 @@ import { isWalletAddress, type WalletReport, type WalletVenueResult } from "@/li
 function Metric({
   label,
   value,
+  unit,
   note,
 }: {
   label: string;
   value: number | null;
+  unit: string;
   note: string;
 }) {
   return (
     <div className="metric">
       <dt>{label}</dt>
       <dd>
-        <Compact value={value} unit="USDC" />
-        <small>USDC</small>
+        {value == null ? (
+          <Missing title={note || "dato no disponible"} />
+        ) : (
+          <>
+            <Compact value={value} unit={unit} />
+            <small>{unit}</small>
+          </>
+        )}
       </dd>
       {note ? <p className="note">{note}</p> : null}
     </div>
@@ -35,8 +43,8 @@ function VenueResult({ name, result }: { name: string; result: WalletVenueResult
       </header>
       {result.ok ? (
         <dl className="metrics wallet-metrics">
-          <Metric label="Volumen" value={result.volumeUsdc} note={result.volumeNote} />
-          <Metric label="OI promedio" value={result.oiAvgUsdc} note={result.oiNote} />
+          <Metric label="Volumen" value={result.volumeUsdc} unit="USDC" note={result.volumeNote} />
+          <Metric label="OI promedio 7d" value={result.oiAvgUsdc} unit={name === "RISEx" ? "USD" : "USDC"} note={result.oiNote} />
         </dl>
       ) : (
         <p className="venue-error" role="alert">

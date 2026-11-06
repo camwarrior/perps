@@ -44,7 +44,7 @@ La ventana es el lunes 00:00:00.000 UTC hasta el lunes siguiente 00:00:00.000 UT
 
 - RISEx: `GET /v1/stats/user-volume` con `start_time` y `end_time` en nanosegundos. El volumen es `total_volume`, notional USDC de trades y liquidaciones.
 - Txflow: suma de `|precio × tamaño|` de `userFills` de perpetuos en esa ventana. Si hay más de 4.000 fills, el volumen queda en "—" para no presentar una suma incompleta.
-- El OI promedio de esa semana no lo publica ninguno de los dos. RISEx tiene un promedio ponderado de 24h, 7d, 30d y all-time; Txflow solo un snapshot del nocional abierto. Esos números no se muestran como si fueran la semana. El total de volumen aparece solo cuando ambas fuentes traen notional USDC completo.
+- El OI que se muestra es el promedio de 7 días, no el de la semana UTC. En RISEx es `d7.market_exposure` de `GET /v1/portfolio/header`: promedio ponderado en el tiempo, notional USD. No se usan 24h, 30d ni all-time. Txflow no publica un OI promedio de 7 días (`userOverview` 7D trae PnL, volumen y equity; el nocional abierto es un snapshot), así que esa celda queda en "—". El total de volumen aparece solo cuando ambas fuentes traen notional USDC completo.
 
 ## Campos que no están
 

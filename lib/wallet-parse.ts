@@ -18,6 +18,23 @@ export function parseRiseVolume(payload: unknown): number {
   return volume;
 }
 
+/** Time-weighted average open interest, last 7 days. Does not fall back to 24h, 30d, or all-time. */
+export function parseRiseExposure7d(payload: unknown): number {
+  const root = asRecord(payload);
+  const data = asRecord(root?.data) ?? root;
+  const week = asRecord(data?.d7);
+  if (!week || !("market_exposure" in week)) throw new Error("RISEx no trajo d7.market_exposure");
+  const exposure = parseNumber(week.market_exposure);
+  if (exposure == null) throw new Error("RISEx no trajo d7.market_exposure");
+  return exposure;
+}
+
+export const RISE_OI_NOTE =
+  "Notional USD. Promedio ponderado en el tiempo de los últimos 7 días (d7.market_exposure). No es la semana UTC.";
+
+export const TXFLOW_OI_NOTE =
+  "Txflow no publica un OI promedio de 7 días. userOverview 7D trae PnL, volumen y equity; el nocional abierto es un snapshot y no se muestra como 7d.";
+
 export function parseFillPage(payload: unknown): { rows: FillRow[]; hasMore: boolean; total: number | null } {
   const root = asRecord(payload);
   if (!root || root.success === false) {
@@ -68,14 +85,14 @@ export function volumeFromFills(
   return { volumeUsdc: volume, total, truncated: false };
 }
 
-export function riseVenue(volumeUsdc: number): WalletVenueResult {
+export function riseVenue(volumeUsdc: number, oiAvgUsd: number | null, oiNote: string): WalletVenueResult {
   return {
     ok: true,
     error: null,
     volumeUsdc,
-    volumeNote: "Notional USDC. RISEx agrega trades y liquidaciones en esta ventana.",
-    oiAvgUsdc: null,
-    oiNote: "RISEx no publica el OI promedio de la semana UTC. El promedio ponderado que sí existe es de 24h, 7d, 30d o all-time.",
+    volumeNote: "Notional USDC. RISEx agrega trades y liquidaciones en la semana UTC.",
+    oiAvgUsdc: oiAvgUsd,
+    oiNote,
   };
 }
 
@@ -88,16 +105,16 @@ export function txflowVenue(volumeUsdc: number | null, total: number | null): Wa
       volumeUsdc: null,
       volumeNote: `Txflow reporta ${count} fills en la semana. No se suma el notional: la lectura se corta en ${TXFLOW_FILL_PAGE * TXFLOW_FILL_PAGES} para no saturar la API.`,
       oiAvgUsdc: null,
-      oiNote: "Txflow no publica el OI promedio de la semana. El nocional abierto es un snapshot y no se usa como promedio.",
+      oiNote: TXFLOW_OI_NOTE,
     };
   }
   return {
     ok: true,
     error: null,
     volumeUsdc,
-    volumeNote: "Notional USDC. Suma de |precio × tamaño| de los fills de perpetuos en la ventana.",
+    volumeNote: "Notional USDC. Suma de |precio × tamaño| de los fills de perpetuos en la semana UTC.",
     oiAvgUsdc: null,
-    oiNote: "Txflow no publica el OI promedio de la semana. El nocional abierto es un snapshot y no se usa como promedio.",
+    oiNote: TXFLOW_OI_NOTE,
   };
 }
 

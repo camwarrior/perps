@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseRiseVolume, volumeFromFills } from "./wallet-parse";
+import { parseRiseExposure7d, parseRiseVolume, volumeFromFills } from "./wallet-parse";
 import { totalVolume } from "./wallet-types";
 import { formatUtcWeek, msToNanos, utcWeek } from "./week";
 
@@ -25,6 +25,21 @@ test("RISEx total_volume is the week notional, including zero", () => {
   assert.equal(parseRiseVolume({ data: { total_volume: "60665722.239141" } }), 60665722.239141);
   assert.equal(parseRiseVolume({ data: { total_volume: "0" } }), 0);
   assert.throws(() => parseRiseVolume({ data: {} }));
+});
+
+test("RISEx 7d exposure uses only d7.market_exposure", () => {
+  const payload = {
+    data: {
+      h24: { market_exposure: "1" },
+      d7: { market_exposure: "23663.427849" },
+      d30: { market_exposure: "9" },
+      all_time: { market_exposure: "8" },
+    },
+  };
+  assert.equal(parseRiseExposure7d(payload), 23663.427849);
+  assert.equal(parseRiseExposure7d({ data: { d7: { market_exposure: "0" } } }), 0);
+  assert.throws(() => parseRiseExposure7d({ data: { h24: { market_exposure: "1" } } }));
+  assert.throws(() => parseRiseExposure7d({ data: { d7: { market_exposure: "" } } }));
 });
 
 test("Txflow volume sums fill notionals inside the window and drops a partial read", () => {

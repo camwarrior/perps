@@ -5,7 +5,9 @@ import { publicError } from "@/lib/number";
 import {
   failedVenue,
   parseFillPage,
+  parseRiseExposure7d,
   parseRiseVolume,
+  RISE_OI_NOTE,
   riseVenue,
   TXFLOW_FILL_PAGE,
   TXFLOW_FILL_PAGES,
@@ -16,17 +18,32 @@ import { normalizeWallet, totalVolume, type WalletReport, type WalletVenueResult
 import { msToNanos, utcWeek } from "@/lib/week";
 
 const RISE_VOLUME = "https://api.rise.trade/v1/stats/user-volume";
+const RISE_HEADER = "https://api.rise.trade/v1/portfolio/header";
 const TX_INFO = "https://rpc.txflow.com/info";
 
 async function readRisex(address: string, startMs: number, endMs: number): Promise<WalletVenueResult> {
+  const volumeUrl = `${RISE_VOLUME}?address=${address}&start_time=${msToNanos(startMs)}&end_time=${msToNanos(endMs)}`;
+  const headerUrl = `${RISE_HEADER}?account=${address}`;
+  const [volumeResult, headerResult] = await Promise.allSettled([
+    fetchJson(volumeUrl, { timeoutMs: 12_000 }),
+    fetchJson(headerUrl, { timeoutMs: 12_000 }),
+  ]);
+  if (volumeResult.status === "rejected") {
+    return failedVenue(`RISEx no respondió (${publicError(volumeResult.reason)}).`);
+  }
+  let volumeUsdc: number;
   try {
-    const payload = await fetchJson(
-      `${RISE_VOLUME}?address=${address}&start_time=${msToNanos(startMs)}&end_time=${msToNanos(endMs)}`,
-      { timeoutMs: 12_000 },
-    );
-    return riseVenue(parseRiseVolume(payload));
+    volumeUsdc = parseRiseVolume(volumeResult.value);
   } catch (error) {
     return failedVenue(`RISEx no respondió (${publicError(error)}).`);
+  }
+  if (headerResult.status === "rejected") {
+    return riseVenue(volumeUsdc, null, `RISEx no trajo el OI promedio 7d (${publicError(headerResult.reason)}).`);
+  }
+  try {
+    return riseVenue(volumeUsdc, parseRiseExposure7d(headerResult.value), RISE_OI_NOTE);
+  } catch (error) {
+    return riseVenue(volumeUsdc, null, `RISEx no trajo el OI promedio 7d (${publicError(error)}).`);
   }
 }
 
