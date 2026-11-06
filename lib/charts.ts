@@ -1,13 +1,19 @@
 import "server-only";
 
+import { cacheLife } from "next/cache";
+
 import {
+  historyComplete,
+  historyStart,
   notionalFromBase,
   rangeStart,
+  settleHistory,
   slicePoints,
   sumBars,
   timestampToMs,
   toTwoSidedOi,
   volumeWeekStart,
+  type CandleHistory,
   type ChartPoint,
   type ChartRange,
   type ChartSeries,
@@ -53,56 +59,49 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 }
 
 /**
- * Daily candles change once a day, so each venue's whole history is fetched once, cached,
- * and every range is a slice of it. Switching 1S → 1M → 1A costs no new upstream calls.
+ * Daily candles change once a day. 1S fetches about one UTC week; 1M, 3M, 1A and ALL
+ * widen that window the first time someone asks. Each market's bars are cached on their
+ * own, so a later isolate reuses the markets that already succeeded and a failed market
+ * does not wipe a good candle.
  */
-const HISTORY_START_MS = Date.UTC(2025, 0, 1);
 const HISTORY_TTL_MS = 10 * 60 * 1000;
 /** A partial or failed pull is retried after this, instead of sitting in the cache for ten minutes. */
 const RETRY_TTL_MS = 45 * 1000;
+/** Shared candle cache: fresh for five minutes, reusable for a day, same for every isolate. */
+const CANDLE_LIFE = { stale: 60, revalidate: 300, expire: 86_400 } as const;
 
-/** `at` is when the data was obtained; `checkedAt` is the last pull attempt. */
-type History = { at: number; checkedAt: number; points: ChartPoint[]; failed: number; total: number; error: string | null };
+const histories = new Map<"risex" | "txflow", CandleHistory>();
+const historyJobs = new Map<string, Promise<CandleHistory>>();
 
-const histories = new Map<"risex" | "txflow", History>();
-const historyJobs = new Map<"risex" | "txflow", Promise<History>>();
-
-function complete(history: History | undefined): boolean {
-  return history != null && history.failed === 0 && history.error == null && history.points.length > 0;
+function historyTtl(history: CandleHistory): number {
+  if (history.staleError) return RETRY_TTL_MS;
+  return historyComplete(history) ? HISTORY_TTL_MS : RETRY_TTL_MS;
 }
 
 /**
- * Pull a venue's history, deduplicating concurrent requests. A failed or partial pull does not
- * replace an earlier complete history: that one keeps being served, labeled with its age,
- * and the pull is retried after RETRY_TTL_MS.
+ * Pull the window a range needs, deduplicating concurrent requests for that window.
+ * A failed or partial pull does not replace an earlier clean history. The clean one keeps
+ * being served for windows it covers, with a note, and the pull is retried after RETRY_TTL_MS.
  */
-async function loadHistory(venue: "risex" | "txflow", pull: () => Promise<History>): Promise<History> {
+async function loadHistory(venue: "risex" | "txflow", fromMs: number, pull: (fromMs: number) => Promise<CandleHistory>): Promise<CandleHistory> {
   const now = Date.now();
   const cached = histories.get(venue);
-  if (cached && now - cached.checkedAt < (complete(cached) ? HISTORY_TTL_MS : RETRY_TTL_MS)) return cached;
-  const running = historyJobs.get(venue);
+  if (cached && cached.fromMs <= fromMs && now - cached.checkedAt < historyTtl(cached)) return cached;
+  const key = `${venue}:${fromMs}`;
+  const running = historyJobs.get(key);
   if (running) return running;
-  const job = pull()
-    .catch((error: unknown): History => {
+  const job = pull(fromMs)
+    .catch((error: unknown): CandleHistory => {
       const at = Date.now();
-      return { at, checkedAt: at, points: [], failed: 0, total: 0, error: publicError(error) };
+      return { at, checkedAt: at, fromMs, points: [], failed: 0, total: 0, error: publicError(error), staleError: null, scopeNote: null };
     })
     .then((next) => {
-      const previous = histories.get(venue);
-      if (!complete(next) && previous && complete(previous)) {
-        const kept: History = {
-          ...previous,
-          checkedAt: next.checkedAt,
-          error: next.error ?? `faltaron ${next.failed} de ${next.total} mercados`,
-        };
-        histories.set(venue, kept);
-        return kept;
-      }
-      histories.set(venue, next);
-      return next;
+      const settled = settleHistory(histories.get(venue), next);
+      histories.set(venue, settled.stored);
+      return settled.served;
     })
-    .finally(() => historyJobs.delete(venue));
-  historyJobs.set(venue, job);
+    .finally(() => historyJobs.delete(key));
+  historyJobs.set(key, job);
   return job;
 }
 
@@ -138,16 +137,23 @@ function readRiseBars(payload: unknown): ChartPoint[] {
   return bars;
 }
 
-async function pullRiseHistory(): Promise<History> {
-  const ids = await riseMarketIds();
+/** One market's daily bars. A thrown fetch is not stored, so a later 429 cannot replace a good candle. */
+async function cachedRiseBars(id: string, fromMs: number): Promise<ChartPoint[]> {
+  "use cache: remote";
+  cacheLife(CANDLE_LIFE);
   const endMs = Date.now();
+  const payload = await fetchJson(
+    `${RISE_MARKETS.replace(/\/markets$/, "")}/markets/id/${id}/trading-view-data?interval=${DAY_NS}&from=${fromMs}000000&to=${endMs}000000`,
+    { timeoutMs: 12_000, retries: 2 },
+  );
+  return readRiseBars(payload);
+}
+
+async function pullRiseHistory(fromMs: number): Promise<CandleHistory> {
+  const ids = await riseMarketIds();
   const bars = await mapPool(ids, 4, async (id) => {
     try {
-      const payload = await fetchJson(
-        `${RISE_MARKETS.replace(/\/markets$/, "")}/markets/id/${id}/trading-view-data?interval=${DAY_NS}&from=${HISTORY_START_MS}000000&to=${endMs}000000`,
-        { timeoutMs: 12_000, retries: 2 },
-      );
-      return readRiseBars(payload);
+      return await cachedRiseBars(id, fromMs);
     } catch {
       return null;
     }
@@ -155,7 +161,8 @@ async function pullRiseHistory(): Promise<History> {
   const failed = bars.filter((item) => item == null).length;
   const points = sumBars(bars.filter((item): item is ChartPoint[] => item != null).flat());
   const at = Date.now();
-  return { at, checkedAt: at, points, failed, total: ids.length, error: null };
+  const error = points.length === 0 && failed > 0 ? `faltaron ${failed} de ${ids.length} mercados` : null;
+  return { at, checkedAt: at, fromMs, points, failed, total: ids.length, error, staleError: null, scopeNote: null };
 }
 
 function readTxBars(payload: unknown): ChartPoint[] {
@@ -173,32 +180,62 @@ function readTxBars(payload: unknown): ChartPoint[] {
   return bars;
 }
 
-async function pullTxHistory(): Promise<History> {
-  // Only perps that traded in the last 24 h, from the live book's cached perpMeta and webData2.
-  const coins = await tradedCoins();
-  const endMs = Date.now();
-  // Txflow answers 429 to bursts: three at a time, each retried with backoff.
+/** One perp's daily bars. Same rule as RISEx: a failed snapshot is not written over a cached one. */
+async function cachedTxBars(coin: string, fromMs: number): Promise<ChartPoint[]> {
+  "use cache: remote";
+  cacheLife(CANDLE_LIFE);
+  const payload = await fetchJson(TX_INFO, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-version": "2026-08-16" },
+    body: JSON.stringify({
+      type: "candleSnapshot",
+      req: { coin, interval: "1d", startTime: fromMs, endTime: Date.now() },
+    }),
+    timeoutMs: 12_000,
+    retries: 3,
+  });
+  return readTxBars(payload);
+}
+
+async function pullTxHistory(fromMs: number): Promise<CandleHistory> {
+  // Only perps that traded in the last 24 h. No webData2 means no candle calls, not the whole book.
+  const selection = await tradedCoins();
+  const at = Date.now();
+  if (selection.unavailable) {
+    return {
+      at,
+      checkedAt: at,
+      fromMs,
+      points: [],
+      failed: 0,
+      total: 0,
+      error: "webData2 no respondió",
+      staleError: null,
+      scopeNote: null,
+    };
+  }
+  const coins = selection.coins;
+  const pct = selection.coverage == null ? null : Math.round(selection.coverage * 100);
+  const scopeNote =
+    selection.capped && pct != null
+      ? `Suma de los ${coins.length} perpetuos de mayor volumen en 24 h (${pct}% de ese notional).`
+      : null;
+  if (coins.length === 0) {
+    return { at, checkedAt: at, fromMs, points: [], failed: 0, total: 0, error: null, staleError: null, scopeNote };
+  }
+  // Txflow answers 429 to bursts: three at a time, each retried with Retry-After.
   const bars = await mapPool(coins, 3, async (coin) => {
     try {
-      const payload = await fetchJson(TX_INFO, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-version": "2026-08-16" },
-        body: JSON.stringify({
-          type: "candleSnapshot",
-          req: { coin, interval: "1d", startTime: HISTORY_START_MS, endTime: endMs },
-        }),
-        timeoutMs: 12_000,
-        retries: 3,
-      });
-      return readTxBars(payload);
+      return await cachedTxBars(coin, fromMs);
     } catch {
       return null;
     }
   });
   const failed = bars.filter((item) => item == null).length;
   const points = sumBars(bars.filter((item): item is ChartPoint[] => item != null).flat());
-  const at = Date.now();
-  return { at, checkedAt: at, points, failed, total: coins.length, error: null };
+  const done = Date.now();
+  const error = points.length === 0 && failed > 0 ? `faltaron ${failed} de ${coins.length} mercados` : null;
+  return { at: done, checkedAt: done, fromMs, points, failed, total: coins.length, error, staleError: null, scopeNote };
 }
 
 function ageLabel(ms: number): string {
@@ -208,45 +245,67 @@ function ageLabel(ms: number): string {
 
 function volumeSeries(
   venue: "RISEx" | "Txflow",
-  history: History,
+  history: CandleHistory,
   range: ChartRange,
   now: number,
   source: string,
   note: string,
 ): ChartSeries {
   const startMs = range === "1S" ? volumeWeekStart(now) : rangeStart(range, now);
+  if (startMs != null && history.fromMs > startMs) {
+    const why = history.error ? `${venue} no respondió (${history.error}).` : `${venue} no trajo velas en esta ventana.`;
+    return emptySeries(source, why, "USDC");
+  }
   const points = slicePoints(history.points, startMs);
   if (points.length === 0) {
     const why = history.error ? `${venue} no respondió (${history.error}).` : `${venue} no trajo velas en esta ventana.`;
     return emptySeries(source, why, "USDC");
   }
   const extra: string[] = [];
-  if (history.error) extra.push(`Serie de hace ${ageLabel(now - history.at)}: el último intento falló (${history.error}).`);
+  if (history.scopeNote) extra.push(history.scopeNote);
+  if (history.staleError) extra.push(`Serie de hace ${ageLabel(now - history.at)}: el último intento falló (${history.staleError}).`);
+  else if (history.error) extra.push(`Serie de hace ${ageLabel(now - history.at)}: el último intento falló (${history.error}).`);
   else if (history.failed > 0) extra.push(`Serie parcial: faltan ${history.failed} de ${history.total} mercados.`);
-  return okSeries(points, "USDC", source, [note, ...extra].join(" "));
+  return okSeries(points, "USDC", source, [note, ...extra].filter(Boolean).join(" "));
 }
 
 async function riseVolume(range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "GET /v1/markets/id/{id}/trading-view-data";
   const note = "Notional USDC estimado: volumen base × cierre, sumado entre mercados. Cada barra es un día UTC. La última puede ir incompleta.";
-  return volumeSeries("RISEx", await loadHistory("risex", pullRiseHistory), range, now, source, note);
+  return volumeSeries("RISEx", await loadHistory("risex", historyStart(range, now), pullRiseHistory), range, now, source, note);
 }
 
 async function txVolume(range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "POST /info candleSnapshot";
   const note = "Notional USDC estimado: volumen base × cierre, sumado entre los perpetuos con volumen en 24 h. Cada barra es un día UTC. La última puede ir incompleta.";
-  return volumeSeries("Txflow", await loadHistory("txflow", pullTxHistory), range, now, source, note);
+  return volumeSeries("Txflow", await loadHistory("txflow", historyStart(range, now), pullTxHistory), range, now, source, note);
 }
 
 let llamaJob: Promise<{ risex: ChartPoint[]; txflow: ChartPoint[] }> | null = null;
 
-/** Both OI series read the same DefiLlama payload: one request, shared. */
+/** Both OI series read the same DefiLlama payload: one request, shared across isolates. */
+async function cachedLlamaOi(): Promise<{ risex: ChartPoint[]; txflow: ChartPoint[] }> {
+  "use cache: remote";
+  cacheLife({ stale: 60, revalidate: 600, expire: 86_400 });
+  return pullLlama();
+}
+
 async function llamaOi(): Promise<{ risex: ChartPoint[]; txflow: ChartPoint[] }> {
   if (llamaCache && Date.now() - llamaCache.at < CACHE_MS) return llamaCache.points;
   if (llamaJob) return llamaJob;
-  llamaJob = pullLlama().finally(() => {
-    llamaJob = null;
-  });
+  const previous = llamaCache;
+  llamaJob = cachedLlamaOi()
+    .then((points) => {
+      llamaCache = { at: Date.now(), points };
+      return points;
+    })
+    .catch((error: unknown) => {
+      if (previous) return previous.points;
+      throw error;
+    })
+    .finally(() => {
+      llamaJob = null;
+    });
   return llamaJob;
 }
 

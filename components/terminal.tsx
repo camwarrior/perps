@@ -69,6 +69,8 @@ function Book({ initial }: { initial: Snapshot }) {
   const [paused, setPaused] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
   const [view, setView] = useState<View>("book");
+  // Series and Wallet stay mounted after the first open so a drawn chart or a wallet result is not thrown away.
+  const [opened, setOpened] = useState({ series: false, wallet: false });
   const [venue, setVenue] = useState<VenueId>("risex");
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState("");
@@ -183,13 +185,17 @@ function Book({ initial }: { initial: Snapshot }) {
     };
   }, []);
 
-  // Warm the Series tab once the book is on screen and the browser is idle.
+  // 1S is already requested when the charts module loads. This covers a later mount of the book.
   useEffect(() => {
-    const idle = window.requestIdleCallback ?? ((callback: () => void) => window.setTimeout(callback, 1500));
-    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
-    const id = idle(() => prefetchCharts(), { timeout: 4000 });
-    return () => cancel(id);
+    prefetchCharts();
   }, []);
+
+  const showView = (next: View) => {
+    setView(next);
+    if (next === "series" || next === "wallet") {
+      setOpened((current) => (current[next] ? current : { ...current, [next]: true }));
+    }
+  };
 
   // Arrow keys move between tabs, as in any tab list.
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -202,7 +208,7 @@ function Book({ initial }: { initial: Snapshot }) {
         : event.key === "End"
           ? VIEWS.length - 1
           : (current + (event.key === "ArrowRight" ? 1 : -1) + VIEWS.length) % VIEWS.length;
-    setView(VIEWS[next].id);
+    showView(VIEWS[next].id);
     tabRefs.current[next]?.focus();
   };
 
@@ -235,7 +241,7 @@ function Book({ initial }: { initial: Snapshot }) {
               aria-controls={`panel-${item.id}`}
               tabIndex={view === item.id ? 0 : -1}
               className="tab"
-              onClick={() => setView(item.id)}
+              onClick={() => showView(item.id)}
             >
               {item.label}
             </button>
@@ -285,6 +291,7 @@ function Book({ initial }: { initial: Snapshot }) {
         </p>
       ) : null}
 
+      {view === "book" || view === "compare" ? (
       <div role="tabpanel" id={`panel-${view}`} aria-labelledby={`tab-${view}`}>
         {view === "book" ? (
           <>
@@ -326,9 +333,18 @@ function Book({ initial }: { initial: Snapshot }) {
             </p>
           </>
         ) : null}
-        {view === "series" ? <VenueCharts /> : null}
-        {view === "wallet" ? <WalletWeek /> : null}
       </div>
+      ) : null}
+      {opened.series ? (
+        <div role="tabpanel" id="panel-series" aria-labelledby="tab-series" hidden={view !== "series"}>
+          <VenueCharts active={view === "series"} />
+        </div>
+      ) : null}
+      {opened.wallet ? (
+        <div role="tabpanel" id="panel-wallet" aria-labelledby="tab-wallet" hidden={view !== "wallet"}>
+          <WalletWeek />
+        </div>
+      ) : null}
     </div>
   );
 }
