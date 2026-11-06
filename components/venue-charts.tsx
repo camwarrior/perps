@@ -14,12 +14,15 @@ const utcDay = new Intl.DateTimeFormat("es-CL", {
   hourCycle: "h23",
 });
 
-function formatTick(ms: number, hourly: boolean): string {
-  const text = utcDay.format(new Date(ms)).replace(",", "");
-  return hourly ? `${text} UTC` : text.replace(/\s+\d{2}:\d{2}$/, "") + " UTC";
+function formatCandle(ms: number): string {
+  return `${utcDay.format(new Date(ms)).replace(",", "")} UTC`;
 }
 
-function ChartFrame({ title, series, hourly }: { title: string; series: ChartSeries | null; hourly: boolean }) {
+function formatAxis(ms: number): string {
+  return formatCandle(ms).replace(/\s+\d{2}:\d{2} UTC$/, " UTC");
+}
+
+function ChartFrame({ title, series }: { title: string; series: ChartSeries | null }) {
   return (
     <article className="chart-card">
       <header className="chart-head">
@@ -32,7 +35,7 @@ function ChartFrame({ title, series, hourly }: { title: string; series: ChartSer
         <p className="chart-empty">{series.note || series.error || "Sin serie."}</p>
       ) : (
         <>
-          <Spark points={series.points} unit={series.unit} hourly={hourly} />
+          <Spark points={series.points} unit={series.unit} />
           <p className="note">{series.note}</p>
         </>
       )}
@@ -40,11 +43,12 @@ function ChartFrame({ title, series, hourly }: { title: string; series: ChartSer
   );
 }
 
-function Spark({ points, unit, hourly }: { points: ChartPoint[]; unit: string; hourly: boolean }) {
+function Spark({ points, unit }: { points: ChartPoint[]; unit: string }) {
   const width = 320;
   const height = 92;
   const padX = 4;
   const padY = 8;
+  const [active, setActive] = useState<number | null>(null);
   const max = Math.max(...points.map((point) => point.v), 0);
   const min = Math.min(...points.map((point) => point.v), 0);
   const span = max - min || 1;
@@ -56,25 +60,53 @@ function Spark({ points, unit, hourly }: { points: ChartPoint[]; unit: string; h
     const base = yOf(Math.min(0, min));
     const top = Math.min(y, base);
     const h = Math.max(1, Math.abs(base - y));
-    return { x, top, h: h, w: Math.max(1, slot - 1), point };
+    return { x, top, h, w: Math.max(1, slot - 1), point };
   });
   const last = points[points.length - 1];
   const first = points[0];
+  const tip = active == null ? null : bars[active];
+
+  const pick = (clientX: number, svg: SVGSVGElement) => {
+    const bounds = svg.getBoundingClientRect();
+    if (bounds.width === 0) return;
+    const x = ((clientX - bounds.left) / bounds.width) * width;
+    const index = Math.min(bars.length - 1, Math.max(0, Math.floor((x - padX) / slot)));
+    setActive(index);
+  };
+
   return (
-    <figure className="spark">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${formatCompact(last?.v ?? 0)} ${unit}`}>
-        {bars.map((bar) => (
-          <rect key={bar.point.t} x={bar.x} y={bar.top} width={bar.w} height={bar.h} className="spark-bar">
-            <title>{`${formatTick(bar.point.t, hourly)} · ${formatFull(bar.point.v, unit)}`}</title>
-          </rect>
+    <figure className="spark" onMouseLeave={() => setActive(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={last ? `${formatCandle(last.t)} · ${formatFull(last.v, unit)}` : "sin puntos"}
+        onMouseMove={(event) => pick(event.clientX, event.currentTarget)}
+      >
+        {bars.map((bar, index) => (
+          <rect
+            key={bar.point.t}
+            x={bar.x}
+            y={bar.top}
+            width={bar.w}
+            height={bar.h}
+            className={index === active ? "spark-bar is-active" : "spark-bar"}
+          />
         ))}
       </svg>
+      {tip ? (
+        <div
+          className="chart-tip"
+          role="tooltip"
+          style={{ left: `${((tip.x + tip.w / 2) / width) * 100}%`, top: `${(tip.top / height) * 100}%` }}
+        >
+          <span>{formatCandle(tip.point.t)}</span>
+          <span className="num">{formatFull(tip.point.v, unit)}</span>
+        </div>
+      ) : null}
       <figcaption className="spark-scale">
-        <span>{first ? formatTick(first.t, hourly) : ""}</span>
-        <span className="num" title={last ? `Última vela · ${formatFull(last.v, unit)}` : undefined}>
-          {last ? `últ. ${formatCompact(last.v)}` : "—"}
-        </span>
-        <span>{last ? formatTick(last.t, hourly) : ""}</span>
+        <span>{first ? formatAxis(first.t) : ""}</span>
+        <span className="num">{last ? `últ. ${formatCompact(last.v)}` : "—"}</span>
+        <span>{last ? formatAxis(last.t) : ""}</span>
       </figcaption>
     </figure>
   );
@@ -106,7 +138,6 @@ export function VenueCharts() {
   }, [range]);
 
   const current = data?.range === range ? data : null;
-  const hourly = range === "1S";
 
   return (
     <section className="charts" aria-label="Series de venue">
@@ -122,10 +153,10 @@ export function VenueCharts() {
       </header>
       {error && !current ? <p className="banner">{error}</p> : null}
       <div className="chart-grid">
-        <ChartFrame title="RISEx · volumen" series={current?.venues.risex.volume ?? null} hourly={hourly} />
-        <ChartFrame title="RISEx · OI" series={current?.venues.risex.oi ?? null} hourly={hourly} />
-        <ChartFrame title="Txflow · volumen" series={current?.venues.txflow.volume ?? null} hourly={hourly} />
-        <ChartFrame title="Txflow · OI" series={current?.venues.txflow.oi ?? null} hourly={hourly} />
+        <ChartFrame title="RISEx · volumen" series={current?.venues.risex.volume ?? null} />
+        <ChartFrame title="Txflow · volumen" series={current?.venues.txflow.volume ?? null} />
+        <ChartFrame title="RISEx · OI" series={current?.venues.risex.oi ?? null} />
+        <ChartFrame title="Txflow · OI" series={current?.venues.txflow.oi ?? null} />
       </div>
     </section>
   );

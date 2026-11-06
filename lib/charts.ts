@@ -1,12 +1,12 @@
 import "server-only";
 
 import {
-  candleInterval,
   notionalFromBase,
   rangeStart,
   slicePoints,
   sumBars,
   timestampToMs,
+  volumeWeekStart,
   type ChartPoint,
   type ChartRange,
   type ChartSeries,
@@ -20,7 +20,6 @@ const RISE_MARKETS = "https://api.rise.trade/v1/markets";
 const TX_INFO = "https://rpc.txflow.com/info";
 const LLAMA_OI = "https://api.llama.fi/overview/open-interest";
 const CACHE_MS = 10 * 60 * 1000;
-const HOUR_NS = "3600000000000";
 const DAY_NS = "86400000000000";
 
 const cache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
@@ -51,7 +50,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 }
 
 function windowFor(range: ChartRange, now: number): { startMs: number; endMs: number } {
-  const start = rangeStart(range, now);
+  const start = range === "1S" ? volumeWeekStart(now) : rangeStart(range, now);
   return { startMs: start ?? Date.UTC(2025, 0, 1), endMs: now };
 }
 
@@ -89,11 +88,11 @@ function readRiseBars(payload: unknown): ChartPoint[] {
 
 async function riseVolume(range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "GET /v1/markets/id/{id}/trading-view-data";
-  const note = "Notional USDC estimado: volumen base × cierre, sumado entre mercados. La última vela puede ir incompleta.";
+  const note = "Notional USDC estimado: volumen base × cierre, sumado entre mercados. Cada barra es un día UTC. La última puede ir incompleta.";
   try {
     const ids = await riseMarketIds();
     const { startMs, endMs } = windowFor(range, now);
-    const interval = candleInterval(range) === "1h" ? HOUR_NS : DAY_NS;
+    const interval = DAY_NS;
     const bars = await mapPool(ids, 10, async (id) => {
       try {
         const payload = await fetchJson(
@@ -144,11 +143,11 @@ async function txCoins(): Promise<string[]> {
 
 async function txVolume(range: ChartRange, now: number): Promise<ChartSeries> {
   const source = "POST /info candleSnapshot";
-  const note = "Notional USDC estimado: volumen base × cierre, sumado entre perpetuos. La última vela puede ir incompleta.";
+  const note = "Notional USDC estimado: volumen base × cierre, sumado entre perpetuos. Cada barra es un día UTC. La última puede ir incompleta.";
   try {
     const coins = await txCoins();
     const { startMs, endMs } = windowFor(range, now);
-    const interval = candleInterval(range);
+    const interval = "1d" as const;
     const bars = await mapPool(coins, 12, async (coin) => {
       try {
         const payload = await fetchJson(TX_INFO, {

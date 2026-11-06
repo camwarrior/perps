@@ -584,6 +584,7 @@ dd {
 }
 
 .spark {
+  position: relative;
   margin: 6px 0 0;
 }
 
@@ -596,6 +597,34 @@ dd {
 .spark-bar {
   fill: var(--up);
   opacity: 0.85;
+}
+
+.spark-bar.is-active {
+  opacity: 1;
+}
+
+.chart-tip {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -110%);
+  pointer-events: none;
+  background: #101311;
+  border: 1px solid var(--line-strong);
+  padding: 4px 6px;
+  min-width: 132px;
+}
+
+.chart-tip span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.chart-tip .num {
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
 }
 
 .spark-scale {

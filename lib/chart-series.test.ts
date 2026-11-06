@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { notionalFromBase, rangeStart, slicePoints, sumBars, timestampToMs } from "./chart-series";
+import { notionalFromBase, rangeStart, slicePoints, sumBars, timestampToMs, volumeWeekStart } from "./chart-series";
 
 test("range windows and timestamp scale", () => {
   const now = Date.parse("2026-11-06T00:00:00.000Z");
   assert.equal(rangeStart("1S", now), now - 7 * 24 * 60 * 60 * 1000);
   assert.equal(rangeStart("1A", now), now - 365 * 24 * 60 * 60 * 1000);
   assert.equal(rangeStart("ALL", now), null);
+  assert.equal(volumeWeekStart(Date.parse("2026-11-06T06:00:00.000Z")), Date.parse("2026-10-31T00:00:00.000Z"));
   assert.equal(timestampToMs("1793836800000000000"), 1793836800000);
   assert.equal(timestampToMs("1793836800000"), 1793836800000);
 });

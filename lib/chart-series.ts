@@ -35,8 +35,11 @@ export function rangeStart(range: ChartRange, now: number): number | null {
   return null;
 }
 
-export function candleInterval(range: ChartRange): "1h" | "1d" {
-  return range === "1S" ? "1h" : "1d";
+/** UTC midnight of the first of seven daily bars ending on today's UTC date. */
+export function volumeWeekStart(now: number): number {
+  const date = new Date(now);
+  const today = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  return today - 6 * DAY;
 }
 
 export function slicePoints(points: ChartPoint[], startMs: number | null): ChartPoint[] {
