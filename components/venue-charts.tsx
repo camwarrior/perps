@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { CHART_RANGES, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
+import { CHART_RANGES, isChartRange, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
 import { formatCompact, formatFull } from "@/lib/format";
 import { useNowSelect } from "@/lib/now";
 
@@ -36,6 +36,8 @@ function useSize<T extends Element>() {
     if (!el) return;
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
+      // display:none reports 0. Keeping the last real size lets the chart stay drawn when the tab is shown again.
+      if (width === 0 || height === 0) return;
       setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
     });
     observer.observe(el);
@@ -303,14 +305,71 @@ function Chart({
   );
 }
 
-// Series are daily UTC candles: a range fetched once in this visit is reused for a minute.
+// Last good payload per range. Fresh for a minute; still shown for a day while a refresh runs.
 const clientCache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
 const clientJobs = new Map<ChartRange, Promise<ChartsPayload>>();
 const CLIENT_TTL_MS = 60_000;
+const PERSIST_MS = 24 * 60 * 60 * 1000;
+const STORAGE_KEY = "perps.series.v1";
 
-function freshCache(range: ChartRange): ChartsPayload | null {
+let rememberedRange: ChartRange = "1S";
+let storeLoaded = false;
+
+function isPayload(value: unknown): value is ChartsPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as ChartsPayload;
+  const volume = payload.venues?.risex?.volume;
+  const tx = payload.venues?.txflow?.volume;
+  return isChartRange(payload.range) && Array.isArray(volume?.points) && Array.isArray(tx?.points) && Array.isArray(payload.venues?.risex?.oi?.points);
+}
+
+function loadStore(): void {
+  if (storeLoaded || typeof window === "undefined") return;
+  storeLoaded = true;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as { range?: unknown; entries?: Record<string, { at?: unknown; data?: unknown }> };
+    if (typeof parsed.range === "string" && isChartRange(parsed.range)) rememberedRange = parsed.range;
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
+      if (!isChartRange(key) || !entry || typeof entry.at !== "number") continue;
+      if (now - entry.at > PERSIST_MS || !isPayload(entry.data) || entry.data.range !== key) continue;
+      clientCache.set(key, { at: entry.at, data: entry.data });
+    }
+  } catch {
+    /* a corrupt or private-mode store just means the first paint waits on the network */
+  }
+}
+
+function persistStore(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries: Record<string, { at: number; data: ChartsPayload }> = {};
+    const now = Date.now();
+    for (const [range, entry] of clientCache) {
+      if (now - entry.at <= PERSIST_MS) entries[range] = entry;
+    }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ range: rememberedRange, entries }));
+  } catch {
+    /* the in-memory copy still covers this visit */
+  }
+}
+
+function rememberRange(next: ChartRange): void {
+  rememberedRange = next;
+  persistStore();
+}
+
+function cachedEntry(range: ChartRange): { at: number; data: ChartsPayload } | null {
+  loadStore();
   const hit = clientCache.get(range);
-  return hit && Date.now() - hit.at < CLIENT_TTL_MS ? hit.data : null;
+  if (!hit || Date.now() - hit.at > PERSIST_MS) return null;
+  return hit;
+}
+
+function isFresh(entry: { at: number } | null): boolean {
+  return entry != null && Date.now() - entry.at < CLIENT_TTL_MS;
 }
 
 /** One request per range at a time, shared by the prefetch and the tab. */
@@ -321,8 +380,9 @@ function loadCharts(range: ChartRange): Promise<ChartsPayload> {
     .then(async (response) => {
       if (!response.ok) throw new Error("HTTP");
       const body = (await response.json()) as ChartsPayload;
-      if (body.range !== range) throw new Error("range");
+      if (!isPayload(body) || body.range !== range) throw new Error("range");
       clientCache.set(range, { at: Date.now(), data: body });
+      persistStore();
       return body;
     })
     .finally(() => clientJobs.delete(range));
@@ -330,42 +390,48 @@ function loadCharts(range: ChartRange): Promise<ChartsPayload> {
   return job;
 }
 
-/** Fetch the default range while the browser is idle, so the Series tab opens already drawn. */
+/** Start 1S as soon as this module runs in the browser, before idle and before the tab is opened. */
 export function prefetchCharts(): void {
-  if (freshCache("1S")) return;
+  loadStore();
+  if (isFresh(cachedEntry("1S"))) return;
   void loadCharts("1S").catch(() => {
     /* the tab retries when opened */
   });
 }
 
-export const VenueCharts = memo(function VenueCharts() {
-  const [range, setRange] = useState<ChartRange>("1S");
-  const [data, setData] = useState<ChartsPayload | null>(() => freshCache("1S"));
+if (typeof window !== "undefined") prefetchCharts();
+
+export const VenueCharts = memo(function VenueCharts({ active }: { active: boolean }) {
+  const [range, setRange] = useState<ChartRange>(() => {
+    loadStore();
+    return rememberedRange;
+  });
+  const [data, setData] = useState<ChartsPayload | null>(() => cachedEntry(rememberedRange)?.data ?? null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (freshCache(range)) return;
+    if (!active) return;
+    if (isFresh(cachedEntry(range))) return;
     let cancel = false;
-    const run = async () => {
-      try {
-        const body = await loadCharts(range);
+    loadCharts(range)
+      .then((body) => {
         if (cancel) return;
         setData(body);
         setError(null);
-      } catch {
-        if (!cancel) setError("No se pudieron leer las series. Prueba otra temporalidad o vuelve en un momento.");
-      }
-    };
-    void run();
+      })
+      .catch(() => {
+        if (!cancel && !cachedEntry(range)) setError("No se pudieron leer las series. Prueba otra temporalidad o vuelve en un momento.");
+      });
     return () => {
       cancel = true;
     };
-  }, [range]);
+  }, [active, range]);
 
   const select = (next: ChartRange) => {
-    const hit = freshCache(next);
+    rememberRange(next);
+    const hit = cachedEntry(next);
     if (hit) {
-      setData(hit);
+      setData(hit.data);
       setError(null);
     }
     setRange(next);
