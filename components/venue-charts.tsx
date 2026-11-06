@@ -265,8 +265,8 @@ function freshCache(range: ChartRange): ChartsPayload | null {
 }
 
 export const VenueCharts = memo(function VenueCharts() {
-  const [range, setRange] = useState<ChartRange>("1M");
-  const [data, setData] = useState<ChartsPayload | null>(() => freshCache("1M"));
+  const [range, setRange] = useState<ChartRange>("1S");
+  const [data, setData] = useState<ChartsPayload | null>(() => freshCache("1S"));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
