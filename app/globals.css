@@ -226,11 +226,15 @@ dd {
 .metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-items: start;
   margin-top: 8px;
 }
 
 .metric {
-  padding: 7px 8px 2px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 7px 12px 2px 0;
   border-top: 1px solid var(--line);
   min-width: 0;
 }
@@ -245,7 +249,7 @@ dd {
 .metric dd {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   margin-top: 3px;
 }
@@ -552,13 +556,15 @@ dd {
 
   .metrics {
     grid-template-columns: 1fr;
+    justify-items: stretch;
   }
 
   .metric {
-    display: flex;
+    flex-direction: row;
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+    width: 100%;
     padding-right: 0;
   }
 
