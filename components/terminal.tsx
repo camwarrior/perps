@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 
 import { CompareTable } from "@/components/compare-table";
 import { MarketsTable } from "@/components/markets-table";
-import { VenueCharts } from "@/components/venue-charts";
+import { prefetchCharts, VenueCharts } from "@/components/venue-charts";
 import { Versus } from "@/components/versus";
 import { WalletWeek } from "@/components/wallet-week";
 import { useQuoteStream, useTickerBackfill } from "@/components/use-live";
@@ -157,6 +157,14 @@ function Book({ initial }: { initial: Snapshot }) {
       if (timer) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
+  }, []);
+
+  // Warm the Series tab once the book is on screen and the browser is idle.
+  useEffect(() => {
+    const idle = window.requestIdleCallback ?? ((callback: () => void) => window.setTimeout(callback, 1500));
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+    const id = idle(() => prefetchCharts(), { timeout: 4000 });
+    return () => cancel(id);
   }, []);
 
   // Arrow keys move between tabs, as in any tab list.

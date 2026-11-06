@@ -266,11 +266,37 @@ function Chart({
 
 // Series are daily UTC candles: a range fetched once in this visit is reused for a minute.
 const clientCache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
+const clientJobs = new Map<ChartRange, Promise<ChartsPayload>>();
 const CLIENT_TTL_MS = 60_000;
 
 function freshCache(range: ChartRange): ChartsPayload | null {
   const hit = clientCache.get(range);
   return hit && Date.now() - hit.at < CLIENT_TTL_MS ? hit.data : null;
+}
+
+/** One request per range at a time, shared by the prefetch and the tab. */
+function loadCharts(range: ChartRange): Promise<ChartsPayload> {
+  const running = clientJobs.get(range);
+  if (running) return running;
+  const job = fetch(`/api/charts?range=${range}`)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("HTTP");
+      const body = (await response.json()) as ChartsPayload;
+      if (body.range !== range) throw new Error("range");
+      clientCache.set(range, { at: Date.now(), data: body });
+      return body;
+    })
+    .finally(() => clientJobs.delete(range));
+  clientJobs.set(range, job);
+  return job;
+}
+
+/** Fetch the default range while the browser is idle, so the Series tab opens already drawn. */
+export function prefetchCharts(): void {
+  if (freshCache("1S")) return;
+  void loadCharts("1S").catch(() => {
+    /* the tab retries when opened */
+  });
 }
 
 export const VenueCharts = memo(function VenueCharts() {
@@ -283,11 +309,8 @@ export const VenueCharts = memo(function VenueCharts() {
     let cancel = false;
     const run = async () => {
       try {
-        const response = await fetch(`/api/charts?range=${range}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("HTTP");
-        const body = (await response.json()) as ChartsPayload;
-        if (cancel || body.range !== range) return;
-        clientCache.set(range, { at: Date.now(), data: body });
+        const body = await loadCharts(range);
+        if (cancel) return;
         setData(body);
         setError(null);
       } catch {
