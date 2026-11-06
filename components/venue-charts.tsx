@@ -4,11 +4,13 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type Point
 
 import { CHART_RANGES, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
 import { formatCompact, formatFull } from "@/lib/format";
+import { useNowSelect } from "@/lib/now";
 
 const dayLabel = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", day: "numeric", month: "short" });
 const dayLong = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
 const RANGE_LABEL: Record<ChartRange, string> = { "1S": "1 semana", "1M": "1 mes", "3M": "3 meses", "1A": "1 año", ALL: "Todo" };
+const DAY_MS = 24 * 60 * 60 * 1000;
 const MARGIN = { top: 10, right: 8, bottom: 26, left: 56 };
 /** Up to this many days the two venues are paired columns; beyond it, two lines. */
 const MAX_BARS = 45;
@@ -75,6 +77,10 @@ function Chart({
   const days = useMemo(() => mergeDays(rx, tx), [rx, tx]);
   const pending = rx == null && tx == null;
   const asBars = days.length <= MAX_BARS;
+  // Today's UTC day has not closed: its bar is a running value (volume so far, OI's latest snapshot).
+  const todayStart = useNowSelect((now) => Math.floor(now / DAY_MS) * DAY_MS);
+  const isOpen = (day: Day) => day.t >= todayStart;
+  const hasOpenDay = days.some(isOpen);
 
   const plotW = Math.max(0, size.width - MARGIN.left - MARGIN.right);
   const plotH = Math.max(0, size.height - MARGIN.top - MARGIN.bottom);
@@ -175,7 +181,7 @@ function Chart({
               ))}
               {asBars ? (
                 days.map((day, index) => {
-                  const dim = hover != null && hover !== index ? "dim" : undefined;
+                  const dim = [hover != null && hover !== index ? "dim" : "", isOpen(day) ? "open-day" : ""].filter(Boolean).join(" ") || undefined;
                   const left = xMid(index) - barW - 1;
                   return (
                     <g key={day.t} className={dim}>
@@ -203,7 +209,9 @@ function Chart({
         {emptyText ? <p className="chart-empty">{emptyText}</p> : null}
         {active ? (
           <div className="chart-tip" role="tooltip" style={{ left: `${tipLeft}px`, top: "0px" }}>
-            <p className="when">{dayLong.format(new Date(active.t))} UTC</p>
+            <p className="when">
+              {dayLong.format(new Date(active.t))} UTC{isOpen(active) ? ", en curso" : ""}
+            </p>
             <ul>
               <li>
                 <span className="swatch sm rx" aria-hidden="true" />
@@ -225,6 +233,7 @@ function Chart({
       </div>
       {notes || sources ? (
         <p className="chart-note">
+          {hasOpenDay ? "La barra de hoy es provisional: el día UTC aún no cierra. " : null}
           {notes} {sources ? `Fuente: ${sources}.` : null}
         </p>
       ) : null}
