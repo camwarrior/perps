@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 
 import { Compact, Missing, Price, SignedPct } from "@/components/numbers";
+import { useFrozenOrder } from "@/components/use-frozen-order";
 import {
   compareRows,
   filterCompare,
@@ -14,19 +15,19 @@ import {
 } from "@/lib/market";
 import type { Market } from "@/lib/types";
 
-const COLUMNS: Array<{ key: CompareSortKey; label: string; group: string }> = [
-  { key: "base", label: "Símbolo", group: "" },
-  { key: "rxLast", label: "Último", group: "RISEx" },
-  { key: "rxPct", label: "Δ %", group: "RISEx" },
-  { key: "rxVol", label: "Vol", group: "RISEx" },
-  { key: "rxOi", label: "OI", group: "RISEx" },
-  { key: "rxFund", label: "Fund.", group: "RISEx" },
-  { key: "txLast", label: "Último", group: "Txflow" },
-  { key: "txPct", label: "Δ %", group: "Txflow" },
-  { key: "txVol", label: "Vol", group: "Txflow" },
-  { key: "txOi", label: "OI", group: "Txflow" },
-  { key: "txFund", label: "Fund.", group: "Txflow" },
-  { key: "spread", label: "Δ último", group: "" },
+const COLUMNS: Array<{ key: CompareSortKey; label: string; group: string; width: number }> = [
+  { key: "base", label: "Símbolo", group: "", width: 104 },
+  { key: "rxLast", label: "Último", group: "RISEx", width: 112 },
+  { key: "rxPct", label: "Δ %", group: "RISEx", width: 76 },
+  { key: "rxVol", label: "Vol", group: "RISEx", width: 84 },
+  { key: "rxOi", label: "OI", group: "RISEx", width: 84 },
+  { key: "rxFund", label: "Fund.", group: "RISEx", width: 124 },
+  { key: "txLast", label: "Último", group: "Txflow", width: 112 },
+  { key: "txPct", label: "Δ %", group: "Txflow", width: 76 },
+  { key: "txVol", label: "Vol", group: "Txflow", width: 84 },
+  { key: "txOi", label: "OI", group: "Txflow", width: 84 },
+  { key: "txFund", label: "Fund.", group: "Txflow", width: 124 },
+  { key: "spread", label: "Δ último", group: "", width: 104 },
 ];
 
 function Side({
@@ -82,7 +83,22 @@ function cell(row: CompareRow, key: CompareSortKey) {
   }
 }
 
-export function CompareTable({
+const keyOfRow = (row: CompareRow) => row.base;
+const TABLE_WIDTH = COLUMNS.reduce((sum, column) => sum + column.width, 0);
+
+const Row = memo(function Row({ row }: { row: CompareRow }) {
+  return (
+    <tr>
+      {COLUMNS.map((column) => (
+        <td key={column.key} className={column.key === "base" ? "sticky" : "right"}>
+          {cell(row, column.key)}
+        </td>
+      ))}
+    </tr>
+  );
+}, (prev, next) => prev.row.risex === next.row.risex && prev.row.txflow === next.row.txflow);
+
+export const CompareTable = memo(function CompareTable({
   risex,
   txflow,
   limit,
@@ -94,12 +110,13 @@ export function CompareTable({
   query: string;
 }) {
   const [sort, setSort] = useState<{ key: CompareSortKey; dir: SortDir }>({ key: "volume", dir: "desc" });
-  const rows = useMemo(() => {
-    const filtered = filterCompare(compareRows(risex, txflow), query);
-    const sorted = sortCompare(filtered, sort.key === "volume" ? "volume" : sort.key, sort.dir);
-    return limit == null ? sorted : sorted.slice(0, limit);
-  }, [risex, txflow, query, sort, limit]);
-  const total = useMemo(() => filterCompare(compareRows(risex, txflow), query).length, [risex, txflow, query]);
+  const filtered = useMemo(() => filterCompare(compareRows(risex, txflow), query), [risex, txflow, query]);
+  const sorted = useMemo(() => {
+    const ordered = sortCompare(filtered, sort.key === "volume" ? "volume" : sort.key, sort.dir);
+    return limit == null ? ordered : ordered.slice(0, limit);
+  }, [filtered, sort, limit]);
+  const { rows, frozen, bind } = useFrozenOrder(sorted, keyOfRow);
+  const total = filtered.length;
 
   const onSort = (key: CompareSortKey) => {
     setSort((prev) => {
@@ -114,16 +131,22 @@ export function CompareTable({
         <h3>Mismo símbolo</h3>
         <p className="book-meta">
           {rows.length} de {total}
+          {frozen ? " · orden en pausa" : ""}
         </p>
       </div>
       {rows.length === 0 ? (
         <p className="empty">{query.trim() ? "Sin símbolos para ese filtro." : "Ningún símbolo en común."}</p>
       ) : (
         <div className={limit == null ? "table-scroll is-all" : "table-scroll"}>
-          <table className="book-table">
+          <table className="book-table" style={{ width: `${TABLE_WIDTH}px` }}>
             <caption className="sr-only">
               Comparación RISEx contra Txflow. Vol y OI en USDC. Δ último es Txflow menos RISEx, en porcentaje.
             </caption>
+            <colgroup>
+              {COLUMNS.map((column) => (
+                <col key={column.key} style={{ width: `${column.width}px` }} />
+              ))}
+            </colgroup>
             <thead>
               <tr>
                 {COLUMNS.map((column) => {
@@ -145,15 +168,9 @@ export function CompareTable({
                 })}
               </tr>
             </thead>
-            <tbody>
+            <tbody {...bind}>
               {rows.map((row) => (
-                <tr key={row.base}>
-                  {COLUMNS.map((column) => (
-                    <td key={column.key} className={column.key === "base" ? "sticky" : "right"}>
-                      {cell(row, column.key)}
-                    </td>
-                  ))}
-                </tr>
+                <Row key={row.base} row={row} />
               ))}
             </tbody>
           </table>
@@ -161,4 +178,4 @@ export function CompareTable({
       )}
     </section>
   );
-}
+});

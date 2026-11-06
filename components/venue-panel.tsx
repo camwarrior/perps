@@ -1,33 +1,56 @@
+import { memo } from "react";
+
 import { Compact } from "@/components/numbers";
+import { useNow } from "@/lib/now";
 import { coverage } from "@/lib/market";
 import { formatAgo, formatSantiago } from "@/lib/time";
 import type { VenueBook } from "@/lib/types";
 
 type StreamStatus = "connecting" | "live" | "down" | "paused";
 
-export function VenuePanel({
+const STREAM_LABEL: Record<StreamStatus, string> = {
+  live: "En vivo",
+  connecting: "Conectando",
+  down: "Cada 10 s",
+  paused: "En pausa",
+};
+
+const STREAM_TITLE: Record<StreamStatus, string> = {
+  live: "Websocket abierto: el mark se actualiza entre sondeos.",
+  connecting: "Abriendo el websocket. Mientras tanto, sondeo cada 10 segundos.",
+  down: "Websocket no disponible. El libro se actualiza por sondeo cada 10 segundos.",
+  paused: "Pestaña oculta. El refresco vuelve al regresar.",
+};
+
+/** Seconds since the venue answered. Lives apart so the panel does not re-render each second. */
+function Ago({ from }: { from: number }) {
+  const now = useNow();
+  return <>{formatAgo(from, now)}</>;
+}
+
+export const VenuePanel = memo(function VenuePanel({
   book,
   stream,
-  now,
   paused,
 }: {
   book: VenueBook;
   stream: StreamStatus;
-  now: number;
   paused: boolean;
 }) {
-  const age = book.fetchedAt == null ? null : formatAgo(book.fetchedAt, now);
   const stamp = book.fetchedAt == null ? null : formatSantiago(book.fetchedAt);
   const cache = book.exchangeTime == null ? null : formatSantiago(book.exchangeTime);
   const covered = coverage(book.markets);
-  const streamLabel =
-    stream === "live" ? "mark vivo" : stream === "connecting" ? "ws…" : stream === "paused" || paused ? "pausa" : "REST";
+  const status: StreamStatus = paused ? "paused" : stream;
+  const sourceTitle = [book.source, stamp, cache ? `cache ${cache}` : null].filter(Boolean).join(" · ");
+  const host = book.source.split(/\s+/)[0];
 
   return (
     <article className="venue" data-state={book.ok ? "ok" : "error"} aria-label={book.label}>
       <header className="venue-head">
         <h2>{book.label}</h2>
-        <span className={`tag ${book.ok ? "ok" : "bad"}`}>{book.ok ? streamLabel : "error"}</span>
+        <span className={`tag ${book.ok ? (status === "live" ? "ok" : "") : "bad"}`} title={book.ok ? STREAM_TITLE[status] : undefined}>
+          {book.ok ? STREAM_LABEL[status] : "Error"}
+        </span>
       </header>
       {book.ok ? (
         <dl className="metrics">
@@ -59,11 +82,14 @@ export function VenuePanel({
           {book.error}
         </p>
       )}
-      <p className="src">
-        <span className="src-label">Fuente</span> {book.source}
-        {stamp ? <span> · {stamp}</span> : null}
-        {age ? <span> · {age}</span> : null}
-        {cache ? <span title="cached_at publicado por RISEx"> · cache {cache}</span> : null}
+      <p className="src" title={sourceTitle}>
+        <span className="src-label">Fuente</span> {host}
+        {book.fetchedAt != null ? (
+          <span>
+            {" · "}
+            <Ago from={book.fetchedAt} />
+          </span>
+        ) : null}
       </p>
       {book.notes.map((note) => (
         <p className="note" key={note}>
@@ -77,4 +103,4 @@ export function VenuePanel({
       ) : null}
     </article>
   );
-}
+});

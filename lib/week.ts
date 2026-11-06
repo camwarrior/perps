@@ -41,3 +41,16 @@ export function formatUtcInstant(ms: number): string {
 export function formatUtcWeek(startMs: number, endMs: number): string {
   return `Desde ${formatUtcInstant(startMs)} hasta ${formatUtcInstant(endMs)}, sin incluir el instante final.`;
 }
+
+const utcDayMonth = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", day: "numeric", month: "short" });
+const utcDay = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", day: "numeric" });
+const utcYear = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", year: "numeric" });
+
+/** "2–8 nov 2026": the seven UTC days of the window, for the visible label. */
+export function formatUtcWeekShort(startMs: number, endMs: number): string {
+  const start = new Date(startMs);
+  const last = new Date(endMs - 1);
+  const sameMonth = start.getUTCMonth() === last.getUTCMonth();
+  const from = sameMonth ? utcDay.format(start) : utcDayMonth.format(start);
+  return `Semana UTC ${from}–${utcDayMonth.format(last)} ${utcYear.format(last)}`.replace(/\./g, "");
+}

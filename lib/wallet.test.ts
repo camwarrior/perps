@@ -74,3 +74,9 @@ test("Txflow volume sums fill notionals inside the window and drops a partial re
   assert.equal(totalVolume(10, null), null);
   assert.equal(totalVolume(null, 0), null);
 });
+
+test("short UTC week label names the seven days", async () => {
+  const { formatUtcWeekShort } = await import("./week");
+  const week = utcWeek(Date.UTC(2026, 10, 6, 12));
+  assert.equal(formatUtcWeekShort(week.startMs, week.endMs), "Semana UTC 2–8 nov 2026");
+});

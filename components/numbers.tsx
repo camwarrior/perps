@@ -1,4 +1,4 @@
-import { formatCompact, formatFull, formatFunding, formatPct, formatPrice, tone } from "@/lib/format";
+import { formatCompact, formatFull, formatFunding, formatPct, formatDelta, formatPrice, formatQty, tone } from "@/lib/format";
 
 export function Missing({ title = "dato no disponible" }: { title?: string }) {
   return (
@@ -19,7 +19,12 @@ export function Price({ value, unit = "USDC" }: { value: number | null; unit?: s
 }
 
 export function Qty({ value, unit }: { value: number | null; unit: string }) {
-  return <Price value={value} unit={unit} />;
+  if (value == null) return <Missing />;
+  return (
+    <span className="num" title={formatFull(value, unit)}>
+      {formatQty(value)}
+    </span>
+  );
 }
 
 export function SignedPct({ value, digits = 2, title }: { value: number | null; digits?: number; title?: string }) {
@@ -43,7 +48,7 @@ export function Compact({ value, unit }: { value: number | null; unit: string })
 
 export function SignedPrice({ value }: { value: number | null }) {
   if (value == null) return <Missing />;
-  const text = `${value > 0 ? "+" : ""}${formatPrice(value)}`;
+  const text = formatDelta(value);
   return (
     <span className={`num ${tone(value)}`} title={formatFull(value, "USDC")}>
       {text}

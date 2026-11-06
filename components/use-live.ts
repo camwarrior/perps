@@ -90,7 +90,8 @@ export function useQuoteStream(active: boolean): {
 
     const connectRisex = () => {
       if (stopped) return;
-      setRisex("connecting");
+      // After a failure, keep showing the polling state while retrying, so the tag does not flicker.
+      setRisex((prev) => (prev === "down" ? prev : "connecting"));
       const ws = new WebSocket("wss://ws.rise.trade/ws");
       riseSocket = ws;
       const connectTimer = window.setTimeout(() => {
@@ -143,7 +144,7 @@ export function useQuoteStream(active: boolean): {
 
     const connectTx = () => {
       if (stopped) return;
-      setTxflow("connecting");
+      setTxflow((prev) => (prev === "down" ? prev : "connecting"));
       const ws = new WebSocket("wss://rpc.txflow.com/ws");
       txSocket = ws;
       const connectTimer = window.setTimeout(() => {

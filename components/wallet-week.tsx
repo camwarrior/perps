@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 
 import { Compact, Missing } from "@/components/numbers";
-import { formatUtcWeek, utcWeek } from "@/lib/week";
+import { useNowSelect } from "@/lib/now";
+import { formatUtcWeek, formatUtcWeekShort, utcWeek } from "@/lib/week";
 import { isWalletAddress, type WalletReport, type WalletVenueResult } from "@/lib/wallet-types";
 
 function Metric({
@@ -55,14 +56,15 @@ function VenueResult({ name, result }: { name: string; result: WalletVenueResult
   );
 }
 
-export function WalletWeek({ now }: { now: number }) {
+export function WalletWeek() {
   const [draft, setDraft] = useState("");
   const [report, setReport] = useState<WalletReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const preview = utcWeek(now);
-  const shownStart = report?.startMs ?? preview.startMs;
-  const shownEnd = report?.endMs ?? preview.endMs;
+  // Re-renders only when the UTC week rolls over, not every second.
+  const weekStart = useNowSelect((now) => utcWeek(now).startMs);
+  const shownStart = report?.startMs ?? weekStart;
+  const shownEnd = report?.endMs ?? utcWeek(weekStart).endMs;
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -95,7 +97,9 @@ export function WalletWeek({ now }: { now: number }) {
     <section className="wallet" aria-label="Wallet en la semana UTC">
       <header className="wallet-head">
         <h2>Wallet</h2>
-        <p className="src">{formatUtcWeek(shownStart, shownEnd)}</p>
+        <p className="src" title={formatUtcWeek(shownStart, shownEnd)}>
+          {formatUtcWeekShort(shownStart, shownEnd)} · lunes 00:00 a lunes 00:00 UTC
+        </p>
       </header>
       <form className="wallet-form" onSubmit={onSubmit}>
         <label className="wallet-field">
