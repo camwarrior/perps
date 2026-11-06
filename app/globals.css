@@ -534,6 +534,84 @@ dd {
   text-transform: uppercase;
 }
 
+.charts {
+  margin-top: 10px;
+}
+
+.chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chart-toolbar h2,
+.chart-head h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.chart-card {
+  border: 1px solid var(--line);
+  background: rgba(9, 11, 10, 0.86);
+  padding: 8px 10px 6px;
+  min-width: 0;
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.chart-empty {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.spark {
+  margin: 6px 0 0;
+}
+
+.spark svg {
+  display: block;
+  width: 100%;
+  height: 92px;
+}
+
+.spark-bar {
+  fill: var(--up);
+  opacity: 0.85;
+}
+
+.spark-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.spark-scale .num {
+  color: var(--text);
+  font-size: 12px;
+}
+
 .wallet {
   margin-top: 10px;
   border: 1px solid var(--line);
@@ -607,7 +685,8 @@ dd {
 
 @media (max-width: 860px) {
   .venues,
-  .wallet-grid {
+  .wallet-grid,
+  .chart-grid {
     grid-template-columns: 1fr;
   }
 }

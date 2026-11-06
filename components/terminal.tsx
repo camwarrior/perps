@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CompareTable } from "@/components/compare-table";
 import { MarketsTable } from "@/components/markets-table";
 import { VenuePanel } from "@/components/venue-panel";
+import { VenueCharts } from "@/components/venue-charts";
 import { WalletWeek } from "@/components/wallet-week";
 import { useQuoteStream, useTickerBackfill } from "@/components/use-live";
 import { compareRows, decorateBook, filterCompare, filterMarkets, sortCompare, sortMarkets } from "@/lib/market";
@@ -130,6 +131,8 @@ export function Terminal({ initial }: { initial: Snapshot }) {
         <VenuePanel book={risex} stream={streams.risex} now={now} paused={paused} />
         <VenuePanel book={txflow} stream={streams.txflow} now={now} paused={paused} />
       </section>
+
+      <VenueCharts />
 
       <WalletWeek now={now} />
 

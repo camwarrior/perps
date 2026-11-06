@@ -36,6 +36,14 @@ Txflow, solo mainnet (`https://rpc.txflow.com/info`, header `x-api-version: 2026
 
 No se usa testnet.
 
+## Series de venue
+
+Entre los totales y la consulta de wallet hay cuatro gráficos: volumen y OI de RISEx, volumen y OI de Txflow. Las temporalidades son `1S`, `1M`, `3M`, `1A` y `ALL`.
+
+El volumen es notional USDC estimado como volumen base × cierre de cada vela, sumado entre mercados. RISEx sale de `trading-view-data`. Txflow sale de `candleSnapshot`. No se rellenan días sin vela.
+
+El OI no lo publica ninguno de los dos como serie. Esos gráficos usan el histórico diario de DefiLlama (`overview/open-interest`), en USD, y lo dicen en la tarjeta. Si una ventana no tiene puntos, el recuadro queda vacío con la razón.
+
 ## Wallet en la semana UTC
 
 Debajo de los totales de cada venue hay un campo para pegar una dirección `0x`. La consulta corre al pedirla y no se guarda.

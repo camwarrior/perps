@@ -1,0 +1,132 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { CHART_RANGES, type ChartPoint, type ChartRange, type ChartSeries, type ChartsPayload } from "@/lib/chart-series";
+import { formatCompact, formatFull } from "@/lib/format";
+
+const utcDay = new Intl.DateTimeFormat("es-CL", {
+  timeZone: "UTC",
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function formatTick(ms: number, hourly: boolean): string {
+  const text = utcDay.format(new Date(ms)).replace(",", "");
+  return hourly ? `${text} UTC` : text.replace(/\s+\d{2}:\d{2}$/, "") + " UTC";
+}
+
+function ChartFrame({ title, series, hourly }: { title: string; series: ChartSeries | null; hourly: boolean }) {
+  return (
+    <article className="chart-card">
+      <header className="chart-head">
+        <h3>{title}</h3>
+        <p className="src">{series ? `${series.unit || "—"} · ${series.source}` : "leyendo"}</p>
+      </header>
+      {series == null ? (
+        <p className="chart-empty">Leyendo serie…</p>
+      ) : series.points.length === 0 ? (
+        <p className="chart-empty">{series.note || series.error || "Sin serie."}</p>
+      ) : (
+        <>
+          <Spark points={series.points} unit={series.unit} hourly={hourly} />
+          <p className="note">{series.note}</p>
+        </>
+      )}
+    </article>
+  );
+}
+
+function Spark({ points, unit, hourly }: { points: ChartPoint[]; unit: string; hourly: boolean }) {
+  const width = 320;
+  const height = 92;
+  const padX = 4;
+  const padY = 8;
+  const max = Math.max(...points.map((point) => point.v), 0);
+  const min = Math.min(...points.map((point) => point.v), 0);
+  const span = max - min || 1;
+  const slot = (width - padX * 2) / points.length;
+  const yOf = (value: number) => padY + (1 - (value - min) / span) * (height - padY * 2);
+  const bars = points.map((point, index) => {
+    const x = padX + index * slot;
+    const y = yOf(point.v);
+    const base = yOf(Math.min(0, min));
+    const top = Math.min(y, base);
+    const h = Math.max(1, Math.abs(base - y));
+    return { x, top, h: h, w: Math.max(1, slot - 1), point };
+  });
+  const last = points[points.length - 1];
+  const first = points[0];
+  return (
+    <figure className="spark">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${formatCompact(last?.v ?? 0)} ${unit}`}>
+        {bars.map((bar) => (
+          <rect key={bar.point.t} x={bar.x} y={bar.top} width={bar.w} height={bar.h} className="spark-bar">
+            <title>{`${formatTick(bar.point.t, hourly)} · ${formatFull(bar.point.v, unit)}`}</title>
+          </rect>
+        ))}
+      </svg>
+      <figcaption className="spark-scale">
+        <span>{first ? formatTick(first.t, hourly) : ""}</span>
+        <span className="num" title={last ? `Última vela · ${formatFull(last.v, unit)}` : undefined}>
+          {last ? `últ. ${formatCompact(last.v)}` : "—"}
+        </span>
+        <span>{last ? formatTick(last.t, hourly) : ""}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+export function VenueCharts() {
+  const [range, setRange] = useState<ChartRange>("1S");
+  const [data, setData] = useState<ChartsPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+    const run = async () => {
+      try {
+        const response = await fetch(`/api/charts?range=${range}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP");
+        const body = (await response.json()) as ChartsPayload;
+        if (cancel || body.range !== range) return;
+        setData(body);
+        setError(null);
+      } catch {
+        if (!cancel) setError("No se pudieron leer las series.");
+      }
+    };
+    void run();
+    return () => {
+      cancel = true;
+    };
+  }, [range]);
+
+  const current = data?.range === range ? data : null;
+  const hourly = range === "1S";
+
+  return (
+    <section className="charts" aria-label="Series de venue">
+      <header className="chart-toolbar">
+        <h2>Series</h2>
+        <div className="segment" role="group" aria-label="Temporalidad">
+          {CHART_RANGES.map((item) => (
+            <button key={item} type="button" aria-pressed={range === item} onClick={() => setRange(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+      </header>
+      {error && !current ? <p className="banner">{error}</p> : null}
+      <div className="chart-grid">
+        <ChartFrame title="RISEx · volumen" series={current?.venues.risex.volume ?? null} hourly={hourly} />
+        <ChartFrame title="RISEx · OI" series={current?.venues.risex.oi ?? null} hourly={hourly} />
+        <ChartFrame title="Txflow · volumen" series={current?.venues.txflow.volume ?? null} hourly={hourly} />
+        <ChartFrame title="Txflow · OI" series={current?.venues.txflow.oi ?? null} hourly={hourly} />
+      </div>
+    </section>
+  );
+}
