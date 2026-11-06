@@ -85,9 +85,10 @@ function readAllAssetCtxs(timeoutMs: number): Promise<Map<number, CtxRow>> {
   });
 }
 
-async function loadMeta(): Promise<MetaInstrument[]> {
+/** perpMeta, cached for five minutes. Shared with the chart series so both do not spend the rate limit. */
+export async function loadMeta(): Promise<MetaInstrument[]> {
   if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.data;
-  const payload = await fetchJson(INFO_URL, infoInit({ type: "perpMeta", includeDelisted: false }));
+  const payload = await fetchJson(INFO_URL, { ...infoInit({ type: "perpMeta", includeDelisted: false }), retries: 2 });
   const data = parsePerpMeta(payload);
   metaCache = { at: Date.now(), data };
   return data;
