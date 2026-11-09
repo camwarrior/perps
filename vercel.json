@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/volume-freeze",
+      "schedule": "5 0 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

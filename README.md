@@ -44,7 +44,7 @@ No se usa testnet.
 
 La pestaña Series muestra dos gráficos: volumen diario y OI al cierre diario, con RISEx (ámbar) y Txflow (azul) en el mismo eje. Las temporalidades son `1S`, `1M`, `3M`, `1A` y `ALL`. Hasta 45 días se dibujan columnas pareadas por día; con más días, dos líneas. Al pasar el mouse o tocar, un tooltip muestra el día y el valor de cada venue, y "Ver datos" abre la tabla completa.
 
-Todas las temporalidades usan velas de 1 día UTC. El notional USDC es volumen base × cierre, sumado entre mercados. RISEx sale de `trading-view-data`. Txflow sale de `candleSnapshot`. No se rellenan días sin vela. Al pasar el mouse, cada barra muestra su marca de tiempo y su valor.
+Todas las temporalidades usan días UTC. El volumen cerrado hasta el 2026-11-08 es el notional diario de DefiLlama (`data/defillama-volume-history.json`), sin volver a calcularlo y sin multiplicarlo por 2. Cada día UTC que ya cerró y no está en esa semilla se calcula una vez con todos los mercados (RISEx: `trading-view-data`, volumen base × cierre; Txflow: `candleSnapshot` de cada perp, sin tope) y queda guardado. El día en curso se calcula igual, en vivo, y no se guarda como cierre. El OI no cambia. Al pasar el mouse, cada barra muestra su marca de tiempo y su valor.
 
 El OI histórico no lo publica el venue. Los gráficos usan el diario de DefiLlama (`overview/open-interest`) multiplicado por 2, en USD, para la convención de dos lados (largo + corto) que publican el tablero y Dune. DefiLlama guarda la mitad. Es un cierre diario UTC, no el OI en vivo. Si una ventana no tiene puntos, el recuadro queda vacío con la razón.
 

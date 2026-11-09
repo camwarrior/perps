@@ -153,6 +153,8 @@ test("a handful of missing markets stays CDN-cacheable and a down venue does not
   assert.match(cold.cdn, /s-maxage=20/);
   const down = chartResponseCache(payload(["", "", "Txflow no respondió.", ""], [true, true, false, true]));
   assert.match(down.cdn, /s-maxage=20/);
+  const liveDown = chartResponseCache(payload(["", "", "El cálculo en vivo no respondió (timeout).", ""]));
+  assert.match(liveDown.cdn, /s-maxage=20/);
 });
 
 test("bars sum by timestamp and do not fill missing days", () => {

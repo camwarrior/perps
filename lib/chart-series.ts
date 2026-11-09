@@ -95,19 +95,20 @@ export function historyStart(range: ChartRange, now: number): number {
 }
 
 /**
+ * Old shortlist, kept for the selector tests. Volume charts do not use it: a single UTC day
+ * is cheap enough to request every listed perp.
  * Txflow reports some 24 h volume on almost every listed perp, so "traded" alone means ~240
- * candle requests per window. Perps are taken largest first until this share of 24 h notional
- * is covered: the tail past it is dust and only spends the rate limit.
+ * names. This stops at the given share of that notional.
  */
 export const TXFLOW_COVERAGE = 0.995;
-/** Hard stop in case the volume book is broken. */
+/** Hard stop for the old shortlist, in case the volume book is broken. */
 export const TXFLOW_CANDLE_CAP = 200;
 
 export type TxCoin = { index: number; base: string };
 export type TxVolumeRow = { instrumentId: number; volume: number | null };
 
 /**
- * Perps worth a candle request: every one that traded in the last 24 h, largest first.
+ * Largest perps by 24 h notional, up to TXFLOW_COVERAGE. Not used by the volume charts.
  * `rows === null` means volume is unknown. That is an empty set, never the whole book.
  */
 export function pickTxflowCoins(
@@ -218,7 +219,7 @@ function missingMarkets(note: string): number | null {
 export function chartsAreWarm(charts: ChartsPayload): boolean {
   const series = [charts.venues.risex.volume, charts.venues.risex.oi, charts.venues.txflow.volume, charts.venues.txflow.oi];
   return series.every((item) => {
-    if (!item.ok) return false;
+    if (!item.ok || item.note.includes("no respondió")) return false;
     const missing = missingMarkets(item.note);
     return missing == null || missing <= HANDFUL;
   });

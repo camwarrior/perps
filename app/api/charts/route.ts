@@ -1,5 +1,5 @@
-// A cold pull walks every traded perp three at a time; leave room for Txflow's backoff.
-export const maxDuration = 60;
+// Today's volume walks every perp, three at a time. A freeze of the day that just closed uses the same pass.
+export const maxDuration = 180;
 
 import { getCharts } from "@/lib/charts";
 import { chartResponseCache, isChartRange } from "@/lib/chart-series";
