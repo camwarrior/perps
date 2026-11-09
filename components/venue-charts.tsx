@@ -310,7 +310,8 @@ const clientCache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
 const clientJobs = new Map<ChartRange, Promise<ChartsPayload>>();
 const CLIENT_TTL_MS = 60_000;
 const PERSIST_MS = 24 * 60 * 60 * 1000;
-const STORAGE_KEY = "perps.series.v1";
+// v2 drops the old estimated candle history. Those bars are not the DefiLlama seed.
+const STORAGE_KEY = "perps.series.v2";
 
 let storeLoaded = false;
 

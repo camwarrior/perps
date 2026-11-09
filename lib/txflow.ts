@@ -1,6 +1,5 @@
 import "server-only";
 
-import { pickTxflowCoins } from "@/lib/chart-series";
 import { fetchJson } from "@/lib/http";
 import { emptyTotals, summarize } from "@/lib/market";
 import { publicError } from "@/lib/number";
@@ -86,7 +85,7 @@ function readAllAssetCtxs(timeoutMs: number): Promise<Map<number, CtxRow>> {
   });
 }
 
-/** perpMeta, cached for five minutes. Shared with the chart series so both do not spend the rate limit. */
+/** perpMeta, cached for five minutes. The volume series uses the same book so both do not spend the rate limit. */
 export async function loadMeta(): Promise<MetaInstrument[]> {
   if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.data;
   const payload = await fetchJson(INFO_URL, { ...infoInit({ type: "perpMeta", includeDelisted: false }), retries: 2 });
@@ -110,37 +109,6 @@ async function loadWeb(): Promise<{ rows: WebRow[]; staleMs: number | null }> {
     if (webCache && age < WEB_STALE_MS) return { rows: webCache.rows, staleMs: age };
     throw error;
   }
-}
-
-export type TradedCoinSet = {
-  coins: string[];
-  capped: boolean;
-  /** Perps with volume in the last 24 h, before the safety cap. */
-  traded: number;
-  /** Share of 24h notional included, or null when webData2 never arrived. */
-  coverage: number | null;
-  /** No volume book at all, including a stale one. Callers must not walk the listed universe. */
-  unavailable: boolean;
-};
-
-/**
- * Perpetuals that traded in the last 24 h, largest first, for the chart history.
- * Txflow lists hundreds of perps; idle names only spend the rate limit.
- * A missing webData2 reuses the last book we did see. It never expands to every listed perp.
- */
-export async function tradedCoins(): Promise<TradedCoinSet> {
-  const meta = (await loadMeta()).filter((item) => !item.delisted && !item.halt);
-  let rows: WebRow[] | null = webCache && Date.now() - webCache.at < 60_000 ? webCache.rows : null;
-  if (!rows) {
-    try {
-      rows = (await loadWeb()).rows;
-    } catch {
-      rows = webCache?.rows ?? null;
-    }
-  }
-  if (!rows) return { coins: [], capped: false, coverage: null, traded: 0, unavailable: true };
-  const picked = pickTxflowCoins(meta, rows);
-  return { ...picked, unavailable: false };
 }
 
 async function fetchOneTicker(id: number): Promise<TickerRow> {
