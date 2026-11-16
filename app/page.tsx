@@ -5,7 +5,7 @@ import { TerminalSkeleton } from "@/components/skeleton";
 import { Terminal } from "@/components/terminal";
 import { getSnapshot } from "@/lib/snapshot";
 
-// The Txflow book fans out one marketTicker per perp. Cold start needs more than the default limit.
+// The response returns without the ticker fan-out. waitUntil keeps refreshing inside this budget.
 export const maxDuration = 60;
 
 export default function Page() {
