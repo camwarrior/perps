@@ -5,7 +5,18 @@ import { formatCompact, formatFunding, formatPrice } from "./format";
 import { coverage, derive, fillGaps, lastSpreadPct, sortMarkets, summarize, withOverride } from "./market";
 import { baseFromSymbol, intervalLabelFromNanos, parseNumber, weiToNumber } from "./number";
 import { parseRisex } from "./risex-parse";
-import { assembleTxflow, parseAssetCtxs, parseMarketTicker, parsePerpMeta, parseWebData, tradableIds, type TickerRow } from "./txflow-parse";
+import {
+  assembleTxflow,
+  dueTickerIds,
+  mergeStoredTickers,
+  parseAssetCtxs,
+  parseMarketTicker,
+  parsePerpMeta,
+  parseWebData,
+  tickerRefreshOrder,
+  tradableIds,
+  type TickerRow,
+} from "./txflow-parse";
 import type { Market } from "./types";
 
 function market(partial: Partial<Market> & Pick<Market, "id" | "symbol" | "base" | "venue">): Market {
@@ -271,6 +282,35 @@ test("marketTicker fan-out sums notional volume once and keeps one-sided OI", ()
   });
   assert.equal(summarize(both.markets).volume24hUsdc, 120_000_000);
   assert.equal(summarize(both.markets).openInterestUsdc, 200);
+});
+
+test("a failed ticker keeps the previous quote and refresh order follows volume", () => {
+  const stored = [
+    { id: 2, at: 1_000, row: ticker({ id: 2, volume: 5_000_000, oi: 1, mark: 10 }) },
+    { id: 1, at: 1_000, row: ticker({ id: 1, volume: 119_000_000, oi: 2, mark: 50 }) },
+  ];
+  assert.deepEqual(tickerRefreshOrder([1, 2, 3], stored), [1, 2, 3]);
+  assert.deepEqual(dueTickerIds([1, 2, 3], stored, 30_000, 60_000), [3]);
+  assert.deepEqual(dueTickerIds([1, 2, 3], stored, 70_000, 60_000), [1, 2, 3]);
+  const merged = mergeStoredTickers(stored, [1, 3], [null, ticker({ id: 3, volume: 10, oi: 1, mark: 2 })], 80_000);
+  assert.equal(merged.find((item) => item.id === 1)?.row.volume, 119_000_000);
+  assert.equal(merged.find((item) => item.id === 1)?.at, 1_000);
+  assert.equal(merged.find((item) => item.id === 3)?.row.volume, 10);
+  const markets = assembleTxflow({
+    meta: parsePerpMeta({
+      success: true,
+      data: {
+        universe: [
+          { index: 1, name: "BTC-USDC", baseCurrency: "BTC", delisted: false, haltTrading: false },
+          { index: 3, name: "SOL-USDC", baseCurrency: "SOL", delisted: false, haltTrading: false },
+        ],
+      },
+    }),
+    web: null,
+    ctxs: null,
+    tickers: new Map(merged.filter((item) => item.id === 1 || item.id === 3).map((item) => [item.id, item.row])),
+  }).markets;
+  assert.equal(summarize(markets).volume24hUsdc, 119_000_010);
 });
 
 test("fresh webData2 volume is not added to marketTicker, and a stale bulk row yields", () => {

@@ -49,6 +49,7 @@ function VenueId({ book, status, side }: { book: VenueBook; status: StreamStatus
       {book.ok ? (
         <p className="venue-meta" title={`${STREAM_TITLE[status]} Fuente: ${source}.`}>
           {book.totals.activeMarkets ?? "—"} mercados, {STREAM_LABEL[status]}
+          {book.refreshing ? ", actualizando" : null}
           {partialVolume ? `, volumen en ${covered.volume} de ${book.markets.length}` : null}
           {partialOi ? `, OI en ${covered.oi} de ${book.markets.length}` : null}
           {book.fetchedAt != null ? (

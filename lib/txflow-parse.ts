@@ -53,6 +53,65 @@ export type TickerRow = {
   changePct: number | null;
 };
 
+/** Last good marketTicker for one instrument. `at` is when that quote was fetched. */
+export type StoredTicker = {
+  id: number;
+  at: number;
+  row: TickerRow;
+};
+
+/** Highest known volume first, so a partial refresh still fills the header. Unknowns go by id. */
+export function tickerRefreshOrder(ids: readonly number[], stored: readonly StoredTicker[]): number[] {
+  const volume = new Map(stored.map((item) => [item.id, item.row.volume ?? -1]));
+  return [...ids].sort((left, right) => {
+    const diff = (volume.get(right) ?? -1) - (volume.get(left) ?? -1);
+    if (diff !== 0) return diff;
+    return left - right;
+  });
+}
+
+/** Ids with no quote, or a quote older than `freshMs`, in refresh order. */
+export function dueTickerIds(
+  ids: readonly number[],
+  stored: readonly StoredTicker[],
+  now: number,
+  freshMs: number,
+): number[] {
+  const at = new Map(stored.map((item) => [item.id, item.at]));
+  return tickerRefreshOrder(ids, stored).filter((id) => {
+    const stamp = at.get(id);
+    return stamp == null || now - stamp >= freshMs;
+  });
+}
+
+/** Keep the previous quote when this attempt failed. A null update does not delete the market. */
+export function mergeStoredTickers(
+  previous: readonly StoredTicker[],
+  ids: readonly number[],
+  updates: readonly (TickerRow | null | undefined)[],
+  at: number,
+): StoredTicker[] {
+  const map = new Map(previous.map((item) => [item.id, item]));
+  for (let index = 0; index < ids.length; index += 1) {
+    const row = updates[index];
+    const id = ids[index];
+    if (!row || id == null) continue;
+    map.set(id, { id, at, row });
+  }
+  return [...map.values()];
+}
+
+/** Oldest stored quote among `ids`, for the age shown next to a cached book. */
+export function oldestTickerAt(stored: readonly StoredTicker[], ids: readonly number[]): number | null {
+  const wanted = new Set(ids);
+  let oldest: number | null = null;
+  for (const item of stored) {
+    if (!wanted.has(item.id)) continue;
+    if (oldest == null || item.at < oldest) oldest = item.at;
+  }
+  return oldest;
+}
+
 function requireSuccess(payload: unknown, label: string): Record<string, unknown> {
   const root = asRecord(payload);
   if (!root || root.success === false) {

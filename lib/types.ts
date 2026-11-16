@@ -43,6 +43,8 @@ export type VenueBook = {
   exchangeTime: number | null;
   source: string;
   notes: string[];
+  /** Background refresh is in progress. The book on screen is the last good cache, or still empty. */
+  refreshing?: boolean;
   /** When the 24 h fields were obtained, if they were carried from an earlier refresh. */
   dailyFetchedAt?: number;
   totals: VenueTotals;

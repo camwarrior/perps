@@ -80,7 +80,8 @@ function Book({ initial }: { initial: Snapshot }) {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const backfillIds = useMemo(() => {
-    if (paused || streams.txflow === "live" || !snapshot.venues.txflow.ok) return [];
+    // The background fan-out fills missing quotes. A parallel backfill would share Txflow's rate limit.
+    if (paused || streams.txflow === "live" || !snapshot.venues.txflow.ok || snapshot.venues.txflow.refreshing) return [];
     const limit = showAll ? null : TOP;
     if (view === "compare") {
       if (!snapshot.venues.risex.ok) return [];
@@ -116,6 +117,7 @@ function Book({ initial }: { initial: Snapshot }) {
   const shownBook = venue === "risex" ? risex : txflow;
 
   const newest = useRef(initial.generatedAt);
+  const refreshSoon = useRef(initial.venues.txflow.refreshing === true);
   useEffect(() => {
     let timer: number | null = null;
     let cancel = false;
@@ -125,7 +127,10 @@ function Book({ initial }: { initial: Snapshot }) {
 
     const pull = async () => {
       try {
-        const response = await fetch("/api/snapshot", { cache: "no-store" });
+        const response = await fetch("/api/snapshot", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(8_000),
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as Snapshot;
         if (cancel) return;
@@ -133,6 +138,7 @@ function Book({ initial }: { initial: Snapshot }) {
         // A slow answer that arrives after a newer one is dropped instead of rolling the book back.
         if (data.generatedAt < newest.current) return;
         newest.current = data.generatedAt;
+        refreshSoon.current = data.venues.txflow.refreshing === true;
         setSnapshot((previous) => ({
           ...data,
           venues: {
@@ -142,8 +148,14 @@ function Book({ initial }: { initial: Snapshot }) {
         }));
         setAppliedAt(Date.now());
         setPollError(null);
-      } catch {
-        if (!cancel) setPollError("El último refresco falló. Se reintenta en 10 s; mientras tanto ves el libro anterior.");
+      } catch (error) {
+        if (cancel) return;
+        const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+        setPollError(
+          timedOut
+            ? "El refresco tardó demasiado. Sigues viendo el libro anterior; Txflow no bloquea a RISEx."
+            : "El último refresco falló. Se reintenta enseguida; mientras tanto ves el libro anterior.",
+        );
       }
     };
 
@@ -156,11 +168,12 @@ function Book({ initial }: { initial: Snapshot }) {
     const arm = () => {
       stop();
       const mine = generation;
+      // While Txflow is filling its cache, look again in 2 s. A full book waits 10 s.
       timer = window.setTimeout(async () => {
         timer = null;
         if (!document.hidden) await pull();
         if (!cancel && !document.hidden && mine === generation) arm();
-      }, 10_000);
+      }, refreshSoon.current ? 2_000 : 10_000);
     };
 
     const onVisibility = () => {
