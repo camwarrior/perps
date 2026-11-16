@@ -27,16 +27,16 @@ El navegador no llama a los exchanges. Todo pasa por rutas `/api/*` del mismo or
 - El cliente vuelve a pedir `GET /api/snapshot` cada 10 segundos.
 - Si la pestaña queda oculta, el refresco se pausa. Al volver, pide un snapshot de inmediato.
 - Hay una caché en memoria de unos 8 segundos para no repetir el mismo upstream en ráfaga.
-- Con la pestaña visible, el cliente abre los websocket públicos y actualiza mark (y en Txflow también último, oracle, OI y funding) entre sondeos. Si el socket no abre, el libro sigue con el sondeo de 10 segundos.
+- Con la pestaña visible, el cliente abre el websocket público de RISEx y actualiza mark e índice entre sondeos. Txflow se actualiza con el sondeo: su socket `allAssetCtxs` está deshabilitado.
 
 RISEx: `GET https://api.rise.trade/v1/markets`. El volumen 24h del venue es la suma de `quote_volume_24h`. No se usa `/v1/stats/volume`. El cambio porcentual se calcula como `change_24h / (last_price - change_24h)`. El websocket `wss://ws.rise.trade/ws` (canal público `oracle`) refresca mark e índice; esos precios vienen en wei y se dividen por 10^18.
 
 Txflow, solo mainnet (`https://rpc.txflow.com/info`, header `x-api-version: 2026-08-16`):
 
-- `perpMeta` resuelve el universo de perpetuos (`BTC-USDC`, etc.).
-- `webData2` trae último, máximo, mínimo, precio previo y volumen 24h. OI, mark y oracle vienen vacíos en ese payload: se muestran como "—" y no se inventan.
-- Un websocket corto a `wss://rpc.txflow.com/ws` (`allAssetCtxs`) llena mark, oracle, interés abierto y funding de todo el libro.
-- Si ese socket falla, `marketTicker` cubre los 20 mercados de mayor volumen. El resto del libro, al pedir "Todos" o la comparación, se completa de a 20 con `GET /api/txflow/tickers`.
+- `perpMeta` resuelve el universo de perpetuos (`BTC-USDC`, etc.). Delistados y con trading detenido quedan fuera.
+- `marketTicker` se pide para cada perp activo (último, mark, oracle, OI en base, funding y `dayNtlVlm`). El volumen 24h del venue es la suma de ese notional USDC, sin duplicarlo. La ráfaga va a unas 12 solicitudes por segundo, bajo el límite de 50, con timeout por pedido y un reintento si alguno responde 429. Si un mercado no contesta, la suma usa los que sí y el encabezado muestra la cobertura (`volumen en N de M`).
+- `webData2` se intenta una vez, con timeout corto. Si responde, aporta volumen, máximo, mínimo y precio previo. Si no (hoy responde 403), el libro sigue con `marketTicker`. `allAssetCtxs` y `metaAndAssetCtxs` no se usan.
+- Si el sondeo dejó un mercado sin mark, oracle ni OI, `GET /api/txflow/tickers` completa ese hueco.
 
 No se usa testnet.
 

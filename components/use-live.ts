@@ -2,19 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { intervalLabelFromMs, weiToNumber } from "@/lib/number";
+import { weiToNumber } from "@/lib/number";
 import type { QuoteOverride, TickerQuote } from "@/lib/types";
 
 export type StreamStatus = "connecting" | "live" | "down" | "paused";
 
 function defined(value: number | null | undefined): number | undefined {
   return value == null ? undefined : value;
-}
-
-function parseLiveNumber(value: string | undefined): number | undefined {
-  if (value == null || !value.trim()) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function overrideFromTicker(quote: TickerQuote, at: number): QuoteOverride {
@@ -44,13 +38,14 @@ export function useQuoteStream(active: boolean): {
 } {
   const [overrides, setOverrides] = useState<Record<string, QuoteOverride>>({});
   const [risex, setRisex] = useState<StreamStatus>("connecting");
-  const [txflow, setTxflow] = useState<StreamStatus>("connecting");
+  const [txflow, setTxflow] = useState<StreamStatus>("down");
   const [trackedActive, setTrackedActive] = useState(active);
   if (active !== trackedActive) {
     setTrackedActive(active);
     if (active) {
       setRisex("connecting");
-      setTxflow("connecting");
+      // allAssetCtxs is disabled. Txflow quotes come from the snapshot, so this stream stays down.
+      setTxflow("down");
     }
   }
   const risexStatus: StreamStatus = active ? risex : "paused";
@@ -63,7 +58,6 @@ export function useQuoteStream(active: boolean): {
     const pending = new Map<string, QuoteOverride>();
     let flushTimer: number | null = null;
     let riseRetry = 1_500;
-    let txRetry = 1_500;
 
     const flush = () => {
       flushTimer = null;
@@ -82,11 +76,8 @@ export function useQuoteStream(active: boolean): {
     };
 
     let riseSocket: WebSocket | null = null;
-    let txSocket: WebSocket | null = null;
     let riseWatch: number | null = null;
-    let txWatch: number | null = null;
     let riseTimer: number | null = null;
-    let txTimer: number | null = null;
 
     const connectRisex = () => {
       if (stopped) return;
@@ -142,101 +133,14 @@ export function useQuoteStream(active: boolean): {
       };
     };
 
-    const connectTx = () => {
-      if (stopped) return;
-      setTxflow((prev) => (prev === "down" ? prev : "connecting"));
-      const ws = new WebSocket("wss://rpc.txflow.com/ws");
-      txSocket = ws;
-      const connectTimer = window.setTimeout(() => {
-        if (ws.readyState === WebSocket.CONNECTING) ws.close();
-      }, 6_000);
-      const beat = () => {
-        if (txWatch) window.clearTimeout(txWatch);
-        txWatch = window.setTimeout(() => ws.close(), 20_000);
-      };
-      ws.onopen = () => {
-        window.clearTimeout(connectTimer);
-        txRetry = 1_500;
-        beat();
-        ws.send(
-          JSON.stringify({
-            method: "subscribe",
-            type: "allAssetCtxs",
-            subscription: { type: "allAssetCtxs" },
-          }),
-        );
-      };
-      ws.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
-        beat();
-        let message: {
-          channel?: string;
-          data?: {
-            ctxs?: Array<{
-              coin?: string;
-              ctx?: {
-                markPx?: string;
-                oraclePx?: string;
-                lastPrice?: string;
-                openInterest?: string;
-                funding?: string;
-                nextFundingTime?: number;
-                prevFundingTime?: number;
-              };
-            }>;
-          };
-        };
-        try {
-          message = JSON.parse(event.data) as typeof message;
-        } catch {
-          return;
-        }
-        if (message.channel !== "allAssetCtxs" || !Array.isArray(message.data?.ctxs)) return;
-        setTxflow("live");
-        const at = Date.now();
-        for (const row of message.data.ctxs) {
-          if (!row.coin || !/^\d+$/.test(row.coin) || !row.ctx) continue;
-          const mark = parseLiveNumber(row.ctx.markPx);
-          const index = parseLiveNumber(row.ctx.oraclePx);
-          const last = parseLiveNumber(row.ctx.lastPrice);
-          const oiBase = parseLiveNumber(row.ctx.openInterest);
-          const fundingPct = parseLiveNumber(row.ctx.funding);
-          const interval = intervalLabelFromMs(
-            row.ctx.nextFundingTime != null && row.ctx.prevFundingTime != null
-              ? row.ctx.nextFundingTime - row.ctx.prevFundingTime
-              : null,
-          );
-          const override: QuoteOverride = { at };
-          if (mark !== undefined && Number.isFinite(mark)) override.mark = mark;
-          if (index !== undefined && Number.isFinite(index)) override.index = index;
-          if (last !== undefined && Number.isFinite(last)) override.last = last;
-          if (oiBase !== undefined && Number.isFinite(oiBase)) override.oiBase = oiBase;
-          if (fundingPct !== undefined && Number.isFinite(fundingPct)) override.fundingPct = fundingPct;
-          if (interval) override.fundingInterval = interval;
-          pending.set(`txflow:${row.coin}`, override);
-        }
-        schedule();
-      };
-      ws.onclose = () => {
-        if (stopped) return;
-        setTxflow("down");
-        txTimer = window.setTimeout(connectTx, txRetry);
-        txRetry = Math.min(txRetry * 2, 20_000);
-      };
-    };
-
     connectRisex();
-    connectTx();
 
     return () => {
       stopped = true;
       if (flushTimer) window.clearTimeout(flushTimer);
       if (riseWatch) window.clearTimeout(riseWatch);
-      if (txWatch) window.clearTimeout(txWatch);
       if (riseTimer) window.clearTimeout(riseTimer);
-      if (txTimer) window.clearTimeout(txTimer);
       riseSocket?.close();
-      txSocket?.close();
     };
   }, [active]);
 

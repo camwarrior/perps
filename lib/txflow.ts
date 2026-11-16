@@ -1,15 +1,15 @@
 import "server-only";
 
-import { fetchJson } from "@/lib/http";
-import { emptyTotals, summarize } from "@/lib/market";
+import { fetchJson, HttpError } from "@/lib/http";
+import { coverage, emptyTotals, summarize } from "@/lib/market";
 import { publicError } from "@/lib/number";
+import { createIntervalLimiter, mapPool } from "@/lib/pool";
 import {
   assembleTxflow,
-  parseAssetCtxs,
   parseMarketTicker,
   parsePerpMeta,
   parseWebData,
-  type CtxRow,
+  tradableIds,
   type MetaInstrument,
   type TickerRow,
   type WebRow,
@@ -17,15 +17,35 @@ import {
 import type { TickerQuote, VenueBook } from "@/lib/types";
 
 const INFO_URL = "https://rpc.txflow.com/info";
-const WS_URL = "wss://rpc.txflow.com/ws";
 const API_VERSION = "2026-08-16";
 const EMPTY_USER = "0x0000000000000000000000000000000000000001";
 const META_TTL_MS = 5 * 60 * 1000;
 const TICKER_TTL_MS = 12_000;
-const TOP_FALLBACK = 20;
+/** A complete ticker book is reused so the 10 s poll does not fan out again immediately. */
+const BOOK_FRESH_MS = 20_000;
+const BOOK_STALE_MS = 3 * 60 * 1000;
+/**
+ * Txflow documents about 50 info requests per second. Live mainnet still returned
+ * 429 near 20/s, so the fan-out stays near 12/s and leaves the rest of the budget
+ * for candleSnapshot on the same host.
+ */
+const TICKER_INTERVAL_MS = 80;
+const TICKER_CONCURRENCY = 8;
+const TICKER_TIMEOUT_MS = 4_000;
+/** Stop scheduling new tickers after this. Calls already in flight keep their own timeout. */
+const TICKER_DEADLINE_MS = 30_000;
+const TICKER_ATTEMPTS = 2;
+/** One try, short timeout: a disabled webData2 must not hold the book. */
+const WEB_TIMEOUT_MS = 2_500;
+const WEB_STALE_MS = 3 * 60 * 1000;
 
 let metaCache: { at: number; data: MetaInstrument[] } | null = null;
 const tickerCache = new Map<number, { at: number; row: TickerRow }>();
+let bookCache: { key: string; at: number; rows: TickerRow[] } | null = null;
+let bookInflight: Promise<{ rows: TickerRow[]; staleMs: number | null }> | null = null;
+let bookInflightKey = "";
+
+const tickerSlots = createIntervalLimiter(TICKER_INTERVAL_MS);
 
 function infoInit(body: unknown, timeoutMs = 8_000): RequestInit & { timeoutMs: number } {
   return {
@@ -39,52 +59,6 @@ function infoInit(body: unknown, timeoutMs = 8_000): RequestInit & { timeoutMs: 
   };
 }
 
-function readAllAssetCtxs(timeoutMs: number): Promise<Map<number, CtxRow>> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
-    let settled = false;
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        ws.close();
-      } catch {
-        /* already closed */
-      }
-      fn();
-    };
-    const timer = setTimeout(() => finish(() => reject(new Error("allAssetCtxs timeout"))), timeoutMs);
-    ws.addEventListener("open", () => {
-      ws.send(
-        JSON.stringify({
-          method: "subscribe",
-          type: "allAssetCtxs",
-          subscription: { type: "allAssetCtxs" },
-        }),
-      );
-    });
-    ws.addEventListener("message", (event) => {
-      const text = typeof event.data === "string" ? event.data : "";
-      if (!text) return;
-      try {
-        const message = JSON.parse(text) as { channel?: string; message?: string; data?: { ctxs?: unknown } };
-        if (message.channel === "error") {
-          finish(() => reject(new Error(message.message || "allAssetCtxs")));
-          return;
-        }
-        if (message.channel === "allAssetCtxs" && Array.isArray(message.data?.ctxs)) {
-          finish(() => resolve(parseAssetCtxs(message.data?.ctxs)));
-        }
-      } catch {
-        /* ignore malformed frames */
-      }
-    });
-    ws.addEventListener("error", () => finish(() => reject(new Error("allAssetCtxs socket"))));
-    ws.addEventListener("close", () => finish(() => reject(new Error("allAssetCtxs closed"))));
-  });
-}
-
 /** perpMeta, cached for five minutes. The volume series uses the same book so both do not spend the rate limit. */
 export async function loadMeta(): Promise<MetaInstrument[]> {
   if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.data;
@@ -94,13 +68,15 @@ export async function loadMeta(): Promise<MetaInstrument[]> {
   return data;
 }
 
-/** Last good webData2, kept so one rate-limited poll does not blank 24 h volume on screen. */
+/** Last good webData2, kept so one failed poll can still supply high and low. */
 let webCache: { at: number; rows: WebRow[] } | null = null;
-const WEB_STALE_MS = 3 * 60 * 1000;
 
 async function loadWeb(): Promise<{ rows: WebRow[]; staleMs: number | null }> {
   try {
-    const payload = await fetchJson(INFO_URL, { ...infoInit({ type: "webData2", user: EMPTY_USER }), retries: 1 });
+    const payload = await fetchJson(INFO_URL, {
+      ...infoInit({ type: "webData2", user: EMPTY_USER }, WEB_TIMEOUT_MS),
+      retries: 0,
+    });
     const rows = parseWebData(payload);
     webCache = { at: Date.now(), rows };
     return { rows, staleMs: null };
@@ -112,44 +88,85 @@ async function loadWeb(): Promise<{ rows: WebRow[]; staleMs: number | null }> {
 }
 
 async function fetchOneTicker(id: number): Promise<TickerRow> {
-  const payload = await fetchJson(INFO_URL, infoInit({ type: "marketTicker", instrumentId: id }));
-  return parseMarketTicker(payload, id);
-}
-
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await fn(items[index] as T);
+  await tickerSlots.take();
+  try {
+    const payload = await fetchJson(INFO_URL, infoInit({ type: "marketTicker", instrumentId: id }, TICKER_TIMEOUT_MS));
+    return parseMarketTicker(payload, id);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 429) {
+      await tickerSlots.pause(Math.min(error.retryAfterMs ?? 1_000, 2_000));
     }
-  });
-  await Promise.all(workers);
-  return results;
+    throw error;
+  }
 }
 
 export async function getTickers(ids: number[]): Promise<TickerRow[]> {
   const now = Date.now();
   const fresh: TickerRow[] = [];
   const missing: number[] = [];
+  const seen = new Set<number>();
   for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
     const hit = tickerCache.get(id);
     if (hit && now - hit.at < TICKER_TTL_MS) fresh.push(hit.row);
     else missing.push(id);
   }
   if (missing.length === 0) return fresh;
-  const fetched = await mapPool(missing, 5, async (id) => {
-    try {
-      const row = await fetchOneTicker(id);
-      tickerCache.set(id, { at: Date.now(), row });
-      return row;
-    } catch {
-      return null;
+  const found = new Map<number, TickerRow>();
+  let pending = missing;
+  for (let attempt = 0; attempt < TICKER_ATTEMPTS && pending.length > 0; attempt += 1) {
+    const fetched = await mapPool(
+      pending,
+      TICKER_CONCURRENCY,
+      async (id) => {
+        try {
+          const row = await fetchOneTicker(id);
+          tickerCache.set(id, { at: Date.now(), row });
+          return row;
+        } catch {
+          return null;
+        }
+      },
+      { deadlineMs: TICKER_DEADLINE_MS },
+    );
+    for (const row of fetched) {
+      if (row) found.set(row.id, row);
     }
+    pending = pending.filter((id) => !found.has(id));
+  }
+  return [...fresh, ...found.values()];
+}
+
+async function loadBookTickers(ids: number[]): Promise<{ rows: TickerRow[]; staleMs: number | null }> {
+  const key = ids.join(",");
+  const now = Date.now();
+  if (bookCache && bookCache.key === key && ids.length > 0 && bookCache.rows.length === ids.length && now - bookCache.at < BOOK_FRESH_MS) {
+    return { rows: bookCache.rows, staleMs: null };
+  }
+  if (bookInflight && bookInflightKey === key) return bookInflight;
+
+  const job = (async () => {
+    const rows = await getTickers(ids);
+    if (rows.length === ids.length && ids.length > 0) {
+      bookCache = { key, at: Date.now(), rows };
+      return { rows, staleMs: null as number | null };
+    }
+    const cached = bookCache && bookCache.key === key ? bookCache : null;
+    const age = cached ? Date.now() - cached.at : Infinity;
+    // A thin answer (timeouts, rate limit) must not replace a recent full book.
+    if (cached && age < BOOK_STALE_MS && rows.length * 2 < cached.rows.length) {
+      return { rows: cached.rows, staleMs: age };
+    }
+    return { rows, staleMs: null as number | null };
+  })();
+
+  bookInflight = job;
+  bookInflightKey = key;
+  void job.finally(() => {
+    if (bookInflight === job) bookInflight = null;
   });
-  return [...fresh, ...fetched.filter((row): row is TickerRow => row != null)];
+  return job;
 }
 
 export function toTickerQuotes(rows: TickerRow[], at: number): { fetchedAt: number; quotes: TickerQuote[] } {
@@ -171,16 +188,6 @@ export function toTickerQuotes(rows: TickerRow[], at: number): { fetchedAt: numb
   };
 }
 
-function topIds(meta: MetaInstrument[] | null, web: WebRow[] | null, limit: number): number[] {
-  const volumes = new Map((web ?? []).map((row) => [row.instrumentId, row.volume ?? -1]));
-  const ids = meta
-    ? meta.filter((item) => !item.delisted && !item.halt).map((item) => item.index)
-    : (web ?? []).filter((row) => row.instrumentId < 10_000).map((row) => row.instrumentId);
-  return ids
-    .toSorted((left, right) => (volumes.get(right) ?? -1) - (volumes.get(left) ?? -1))
-    .slice(0, limit);
-}
-
 function failed(message: string): VenueBook {
   return {
     id: "txflow",
@@ -197,51 +204,80 @@ function failed(message: string): VenueBook {
 }
 
 export async function fetchTxflow(): Promise<VenueBook> {
-  const [metaResult, webResult, ctxResult] = await Promise.allSettled([
-    loadMeta(),
-    loadWeb(),
-    readAllAssetCtxs(4_500),
-  ]);
+  const webPromise = loadWeb().then(
+    (value) => ({ ok: true as const, rows: value.rows, staleMs: value.staleMs }),
+    (reason: unknown) => ({ ok: false as const, reason }),
+  );
 
-  const meta = metaResult.status === "fulfilled" ? metaResult.value : null;
-  const web = webResult.status === "fulfilled" ? webResult.value.rows : null;
-  const webStaleMs = webResult.status === "fulfilled" ? webResult.value.staleMs : null;
-  const ctxs = ctxResult.status === "fulfilled" ? ctxResult.value : null;
-  const notes: string[] = [];
+  let meta: MetaInstrument[] | null = null;
+  let metaReason: unknown = null;
+  try {
+    meta = await loadMeta();
+  } catch (reason) {
+    metaReason = reason;
+  }
+
+  let tickerRows: TickerRow[] = [];
+  let tickerStaleMs: number | null = null;
+  let tickerRequested = 0;
+  if (meta) {
+    const ids = tradableIds(meta);
+    tickerRequested = ids.length;
+    const loaded = await loadBookTickers(ids);
+    tickerRows = loaded.rows;
+    tickerStaleMs = loaded.staleMs;
+  }
+
+  const webResult = await webPromise;
+  const web = webResult.ok ? webResult.rows : null;
+  const webStaleMs = webResult.ok ? webResult.staleMs : null;
 
   if (!meta && !web) {
-    return failed(`Txflow no respondió (${publicError(metaResult.status === "rejected" ? metaResult.reason : webResult.status === "rejected" ? webResult.reason : "sin datos")}).`);
+    const reason = metaReason ?? (webResult.ok ? "sin datos" : webResult.reason);
+    return failed(`Txflow no respondió (${publicError(reason)}).`);
   }
 
-  let tickers: Map<number, TickerRow> | null = null;
-  if (!ctxs) {
-    try {
-      const rows = await getTickers(topIds(meta, web, TOP_FALLBACK));
-      tickers = new Map(rows.map((row) => [row.id, row]));
-      notes.push(
-        web
-          ? "allAssetCtxs no respondió. Mark, oracle, OI y funding solo en los 20 de mayor volumen (marketTicker)."
-          : "allAssetCtxs no respondió. Mark, oracle, OI y funding solo en 20 mercados (marketTicker).",
-      );
-    } catch (error) {
-      notes.push(`allAssetCtxs no respondió y marketTicker falló (${publicError(error)}).`);
-    }
+  const notes: string[] = [];
+  const tickers = new Map(tickerRows.map((row) => [row.id, row]));
+
+  if (!web && tickerRows.length > 0) {
+    notes.push("webData2 no respondió. Volumen, mark, oracle, OI y funding salen de marketTicker.");
+  } else if (!web) {
+    notes.push("webData2 no respondió. Sin volumen ni máximo/mínimo 24h.");
   }
-  if (!web) notes.push("webData2 no respondió. Sin volumen ni máximo/mínimo 24h.");
-  if (webStaleMs != null) {
-    notes.push(`webData2 no respondió en este refresco: volumen y máximo/mínimo 24h son de hace ${Math.max(1, Math.round(webStaleMs / 1000))} s.`);
+  if (webStaleMs != null && tickerRows.length === 0) {
+    notes.push(
+      `webData2 no respondió en este refresco: volumen y máximo/mínimo 24h son de hace ${Math.max(1, Math.round(webStaleMs / 1000))} s.`,
+    );
+  } else if (webStaleMs != null) {
+    notes.push(
+      `webData2 no respondió en este refresco. Máximo y mínimo 24h son de hace ${Math.max(1, Math.round(webStaleMs / 1000))} s.`,
+    );
   }
   if (!meta) notes.push("perpMeta no respondió. Símbolos tomados de webData2.");
-
-  const assembled = assembleTxflow({ meta, web, ctxs, tickers });
-  if (assembled.omitted > 0) {
+  if (tickerStaleMs != null) {
     notes.push(
-      assembled.omitted === 1 ? "1 mercado inactivo omitido." : `${assembled.omitted} mercados inactivos omitidos.`,
+      `marketTicker no respondió en este refresco: volumen, mark, oracle y OI son de hace ${Math.max(1, Math.round(tickerStaleMs / 1000))} s.`,
     );
+  }
+
+  const assembled = assembleTxflow({
+    meta,
+    web,
+    ctxs: null,
+    tickers: tickerRequested > 0 ? tickers : null,
+    webStale: webStaleMs != null,
+  });
+  if (assembled.omitted > 0) {
+    notes.push(assembled.omitted === 1 ? "1 mercado inactivo omitido." : `${assembled.omitted} mercados inactivos omitidos.`);
+  }
+  const covered = coverage(assembled.markets);
+  if (tickerStaleMs == null && covered.volume < assembled.markets.length) {
+    notes.push(`Volumen 24h de ${covered.volume} de ${assembled.markets.length} mercados. La suma usa los que contestaron.`);
   }
   if (assembled.markets.length === 0) return failed("Txflow respondió sin perpetuos.");
 
-  const source = [meta ? "perpMeta" : null, web ? "webData2" : null, ctxs ? "allAssetCtxs" : tickers ? "marketTicker" : null]
+  const source = [meta ? "perpMeta" : null, web ? "webData2" : null, tickerRows.length > 0 ? "marketTicker" : null]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
