@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { formatCompact, formatFunding, formatPrice } from "./format";
-import { derive, fillGaps, lastSpreadPct, sortMarkets, withOverride } from "./market";
+import { coverage, derive, fillGaps, lastSpreadPct, sortMarkets, summarize, withOverride } from "./market";
 import { baseFromSymbol, intervalLabelFromNanos, parseNumber, weiToNumber } from "./number";
 import { parseRisex } from "./risex-parse";
-import { assembleTxflow, parseAssetCtxs, parseMarketTicker, parsePerpMeta, parseWebData } from "./txflow-parse";
+import { assembleTxflow, parseAssetCtxs, parseMarketTicker, parsePerpMeta, parseWebData, tradableIds, type TickerRow } from "./txflow-parse";
 import type { Market } from "./types";
 
 function market(partial: Partial<Market> & Pick<Market, "id" | "symbol" | "base" | "venue">): Market {
@@ -213,6 +213,103 @@ test("marketTicker funding is already percent and spot ids stay out of the fallb
     assembled.markets.map((item) => item.base),
     ["SOL"],
   );
+});
+
+function ticker(partial: Pick<TickerRow, "id" | "volume" | "oi" | "mark"> & Partial<TickerRow>): TickerRow {
+  return {
+    last: partial.mark,
+    index: partial.mark,
+    funding: 0.00125,
+    interval: "1h",
+    prev: partial.mark,
+    changeAbs: null,
+    changePct: null,
+    ...partial,
+  };
+}
+
+test("marketTicker fan-out sums notional volume once and keeps one-sided OI", () => {
+  const meta = parsePerpMeta({
+    success: true,
+    data: {
+      universe: [
+        { index: 1, name: "BTC-USDC", baseCurrency: "BTC", delisted: false, haltTrading: false },
+        { index: 2, name: "ETH-USDC", baseCurrency: "ETH", delisted: false, haltTrading: false },
+        { index: 3, name: "HALT-USDC", baseCurrency: "HALT", delisted: false, haltTrading: true },
+        { index: 4, name: "OLD-USDC", baseCurrency: "OLD", delisted: true, haltTrading: false },
+      ],
+    },
+  });
+  assert.deepEqual(tradableIds(meta), [1, 2]);
+
+  const assembled = assembleTxflow({
+    meta,
+    web: null,
+    ctxs: null,
+    tickers: new Map([[1, ticker({ id: 1, volume: 119_000_000, oi: 10, mark: 100 })]]),
+  });
+  assert.equal(assembled.omitted, 2);
+  assert.equal(assembled.markets.length, 2);
+  assert.equal(assembled.markets[0]?.volumeUsdc, 119_000_000);
+  assert.equal(assembled.markets[0]?.oiBase, 10);
+  assert.equal(assembled.markets[0]?.oiUsdc, 1_000);
+  assert.equal(assembled.markets[1]?.volumeUsdc, null);
+  assert.equal(assembled.markets[1]?.oiUsdc, null);
+  const totals = summarize(assembled.markets);
+  assert.equal(totals.volume24hUsdc, 119_000_000);
+  assert.equal(totals.openInterestUsdc, 1_000);
+  assert.deepEqual(coverage(assembled.markets), { oi: 1, volume: 1 });
+
+  const both = assembleTxflow({
+    meta: meta.filter((item) => item.index === 1 || item.index === 2),
+    web: null,
+    ctxs: null,
+    tickers: new Map([
+      [1, ticker({ id: 1, volume: 119_000_000, oi: 2, mark: 50 })],
+      [2, ticker({ id: 2, volume: 1_000_000, oi: 4, mark: 25 })],
+    ]),
+  });
+  assert.equal(summarize(both.markets).volume24hUsdc, 120_000_000);
+  assert.equal(summarize(both.markets).openInterestUsdc, 200);
+});
+
+test("fresh webData2 volume is not added to marketTicker, and a stale bulk row yields", () => {
+  const meta = parsePerpMeta({
+    success: true,
+    data: {
+      universe: [{ index: 1, name: "BTC-USDC", baseCurrency: "BTC", delisted: false, haltTrading: false }],
+    },
+  });
+  const web = [
+    {
+      instrumentId: 1,
+      coin: "BTC",
+      last: 110,
+      high: 120,
+      low: 90,
+      prev: 100,
+      volume: 1_000,
+      volumeBase: 2,
+    },
+  ];
+  const tickers = new Map([[1, ticker({ id: 1, volume: 119_000_000, oi: 10, mark: 100, last: 111, prev: 90 })]]);
+  const fresh = assembleTxflow({ meta, web, ctxs: null, tickers, webStale: false });
+  assert.equal(fresh.markets[0]?.volumeUsdc, 1_000);
+  assert.equal(fresh.markets[0]?.high, 120);
+  assert.equal(fresh.markets[0]?.low, 90);
+  assert.equal(fresh.markets[0]?.mark, 100);
+  assert.equal(fresh.markets[0]?.oiUsdc, 1_000);
+  assert.equal(fresh.markets[0]?.last, 110);
+
+  const stale = assembleTxflow({ meta, web, ctxs: null, tickers, webStale: true });
+  assert.equal(stale.markets[0]?.volumeUsdc, 119_000_000);
+  assert.equal(stale.markets[0]?.last, 111);
+  assert.equal(stale.markets[0]?.high, 120);
+  assert.equal(stale.markets[0]?.low, 90);
+
+  const staleOnly = assembleTxflow({ meta, web, ctxs: null, tickers: null, webStale: true });
+  assert.equal(staleOnly.markets[0]?.volumeUsdc, 1_000);
+  assert.equal(staleOnly.markets[0]?.oiUsdc, null);
 });
 
 test("gaps fill missing mark without erasing a newer last, and nulls sort last", () => {

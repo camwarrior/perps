@@ -36,6 +36,7 @@ function VenueId({ book, status, side }: { book: VenueBook; status: StreamStatus
   const cache = book.exchangeTime == null ? null : formatSantiago(book.exchangeTime);
   const source = [book.source, stamp, cache ? `cache ${cache}` : null].filter(Boolean).join(", ");
   const swatch = <span className={`swatch ${book.id === "risex" ? "rx" : "tx"}`} aria-hidden="true" />;
+  const partialVolume = book.ok && covered.volume < book.markets.length;
   const partialOi = book.ok && covered.oi < book.markets.length;
 
   return (
@@ -48,6 +49,7 @@ function VenueId({ book, status, side }: { book: VenueBook; status: StreamStatus
       {book.ok ? (
         <p className="venue-meta" title={`${STREAM_TITLE[status]} Fuente: ${source}.`}>
           {book.totals.activeMarkets ?? "—"} mercados, {STREAM_LABEL[status]}
+          {partialVolume ? `, volumen en ${covered.volume} de ${book.markets.length}` : null}
           {partialOi ? `, OI en ${covered.oi} de ${book.markets.length}` : null}
           {book.fetchedAt != null ? (
             <>

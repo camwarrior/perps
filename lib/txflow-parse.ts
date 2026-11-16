@@ -63,6 +63,16 @@ function requireSuccess(payload: unknown, label: string): Record<string, unknown
   return data;
 }
 
+/** Listed perps that still trade. Delisted and halted names stay out of the book. */
+export function tradableIds(meta: MetaInstrument[]): number[] {
+  const ids: number[] = [];
+  for (const instrument of meta) {
+    if (instrument.delisted || instrument.halt) continue;
+    ids.push(instrument.index);
+  }
+  return ids;
+}
+
 export function parsePerpMeta(payload: unknown): MetaInstrument[] {
   const data = requireSuccess(payload, "perpMeta");
   const universe = asArray(data.universe);
@@ -151,6 +161,15 @@ export function parseMarketTicker(payload: unknown, id: number): TickerRow {
   };
 }
 
+/**
+ * Bulk `webData2` values win when that payload is fresh.
+ * A stale bulk row yields to `marketTicker` when the ticker has the field.
+ */
+function pickDaily(webStale: boolean, webValue: number | null | undefined, tickerValue: number | null | undefined): number | null {
+  if (webStale) return tickerValue ?? webValue ?? null;
+  return webValue ?? tickerValue ?? null;
+}
+
 function intervalFromCtx(ctx: CtxRow | undefined): string | null {
   if (!ctx || ctx.nextFunding == null || ctx.prevFunding == null) return null;
   return intervalLabelFromMs(ctx.nextFunding - ctx.prevFunding);
@@ -184,8 +203,11 @@ export function assembleTxflow(input: {
   web: WebRow[] | null;
   ctxs: Map<number, CtxRow> | null;
   tickers: Map<number, TickerRow> | null;
+  /** True when `web` was served from the short cache after `webData2` failed. */
+  webStale?: boolean;
 }): { markets: Market[]; omitted: number } {
   const webById = new Map((input.web ?? []).map((row) => [row.instrumentId, row]));
+  const webStale = input.webStale === true;
   const markets: Market[] = [];
   let omitted = 0;
 
@@ -193,14 +215,15 @@ export function assembleTxflow(input: {
     const web = webById.get(id);
     const ctx = input.ctxs?.get(id);
     const ticker = input.tickers?.get(id);
-    const last = ctx?.last ?? web?.last ?? ticker?.last ?? null;
-    const prev = web?.prev ?? ticker?.prev ?? null;
+    const last = ctx?.last ?? pickDaily(webStale, web?.last, ticker?.last);
+    const prev = pickDaily(webStale, web?.prev, ticker?.prev);
     const mark = ctx?.mark ?? ticker?.mark ?? null;
     const index = ctx?.index ?? ticker?.index ?? null;
     const oiBase = ctx?.oi ?? ticker?.oi ?? null;
     const fundingPct = ctx?.funding ?? ticker?.funding ?? null;
     const fundingInterval = intervalFromCtx(ctx) ?? ticker?.interval ?? null;
-    const volumeUsdc = web?.volume ?? ticker?.volume ?? null;
+    // One notional figure: bulk dayNtlVlm, or the ticker's, never the sum of both.
+    const volumeUsdc = pickDaily(webStale, web?.volume, ticker?.volume);
     let changeAbs: number | null = null;
     let changePct: number | null = null;
     if (!(last != null && prev != null && prev !== 0)) {
