@@ -50,7 +50,7 @@ export function lastSeedDate(points: ChartPoint[]): string | null {
 
 export function volumeNote(through: string | null): string {
   const closed = through
-    ? `Hasta el ${through}, el valor es el de DefiLlama y no se vuelve a calcular. Los días cerrados posteriores se calculan de nuevo con todos los mercados y quedan guardados.`
+    ? `Hasta el ${through}, el valor de este venue es el de DefiLlama y no se vuelve a calcular. Los días cerrados posteriores se calculan de nuevo con todos los mercados y quedan guardados.`
     : "Los días UTC cerrados se calculan con todos los mercados y quedan guardados.";
   return `Notional USDC de cada día UTC. ${closed} El día en curso suma volumen base × cierre y puede ir incompleto.`;
 }
@@ -118,8 +118,10 @@ function seedDayMap(points: ChartPoint[]): Map<number, ChartPoint> {
 }
 
 /**
- * Closed UTC days after the seed and before today.
- * The seed's own days are never in this list, so they are never refetched.
+ * Closed UTC days after this venue's own seed and before today.
+ * The end date is the last day of the seed passed in, so Txflow and RISEx can
+ * stop on different dates. Days that belong to the seed are never listed, and
+ * a frozen value is not allowed to replace them.
  */
 export function closedDaysAfterSeed(seed: ChartPoint[], now: number): number[] {
   let last = -1;
@@ -147,6 +149,8 @@ export async function resolveVenueVolume(options: {
   const missing: number[] = [];
   const stored = new Map<number, number>();
   for (const day of closedDaysAfterSeed(options.seed, options.now)) {
+    // This venue's published day wins over anything already frozen for that date.
+    if (published.has(day)) continue;
     const value = await options.readFrozen(day);
     if (value == null) missing.push(day);
     else stored.set(day, value);
@@ -209,6 +213,7 @@ export async function resolveVenueVolume(options: {
     .map((point) => ({ t: point.t, v: point.v }));
   const seen = new Set(points.map((point) => utcDayStart(point.t)));
   for (const [day, volume] of [...stored, ...fresh]) {
+    // Seed days stay as published even when a frozen or fresh pull has the same day.
     if (seen.has(day) || day >= today) continue;
     seen.add(day);
     points.push({ t: day, v: volume });

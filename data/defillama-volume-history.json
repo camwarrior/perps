@@ -1,7 +1,7 @@
 {
   "source": "defillama",
   "extractedAt": "2026-11-09T06:19:31.740188+00:00",
-  "note": "Daily perp notional volume from public DefiLlama protocol perps chart pages (pageProps.chart). Last point is the last completed UTC day published there. Do not invent values.",
+  "note": "Daily perp notional volume from public DefiLlama protocol perps chart pages (pageProps.chart). Last point is the last completed UTC day published there. Txflow was extended on 2026-11-22 from https://defillama.com/protocol/perps/txflow through 2026-11-21; days through 2026-11-08 matched the previous extract with no revisions. RISEx stays the 2026-11-09 extract through 2026-11-08. Do not invent values.",
   "venues": {
     "risex": {
       "name": "RISEx",
@@ -1141,24 +1141,25 @@
     },
     "txflow": {
       "name": "TxFlow Perps",
-      "url": "https://defillama.com/protocol/perps/txflow-perps",
+      "url": "https://defillama.com/protocol/perps/txflow",
       "methodology": "Notional volume of all trades including leverage on the perp exchange",
+      "extendedAt": "2026-11-22T03:42:56Z",
       "pageTotals": {
-        "total24h": 146319006,
-        "total7d": 1154181530,
-        "total30d": 4708252805,
-        "total1y": 13112108457,
-        "annualized1y": 20990875380.723686,
-        "totalAllTime": 13112108457,
+        "total24h": 452577262,
+        "total7d": 2341182308,
+        "total30d": 6155927889,
+        "total1y": 16616622042,
+        "annualized1y": 25166253300.12448,
+        "totalAllTime": 16616622042,
         "methodology": "Notional volume of all trades including leverage on the perp exchange",
         "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/txflow-perps",
         "defaultChartView": "daily",
         "chainBreakdown": {
           "TxFlow": {
-            "total24h": 146319006,
-            "total7d": 1154181530,
-            "total30d": 4708252805,
-            "totalAllTime": 13112108457
+            "total24h": 452577262,
+            "total7d": 2341182308,
+            "total30d": 6155927889,
+            "totalAllTime": 16616622042
           }
         }
       },
@@ -2302,6 +2303,71 @@
           "date": "2026-11-08",
           "ts": 1794096000000,
           "volumeUsd": 146319006
+        },
+        {
+          "date": "2026-11-09",
+          "ts": 1794182400000,
+          "volumeUsd": 153554481
+        },
+        {
+          "date": "2026-11-10",
+          "ts": 1794268800000,
+          "volumeUsd": 210247525
+        },
+        {
+          "date": "2026-11-11",
+          "ts": 1794355200000,
+          "volumeUsd": 170045466
+        },
+        {
+          "date": "2026-11-12",
+          "ts": 1794441600000,
+          "volumeUsd": 165924919
+        },
+        {
+          "date": "2026-11-13",
+          "ts": 1794528000000,
+          "volumeUsd": 208936819
+        },
+        {
+          "date": "2026-11-14",
+          "ts": 1794614400000,
+          "volumeUsd": 254622067
+        },
+        {
+          "date": "2026-11-15",
+          "ts": 1794700800000,
+          "volumeUsd": 295879244
+        },
+        {
+          "date": "2026-11-16",
+          "ts": 1794787200000,
+          "volumeUsd": 221077918
+        },
+        {
+          "date": "2026-11-17",
+          "ts": 1794873600000,
+          "volumeUsd": 270263732
+        },
+        {
+          "date": "2026-11-18",
+          "ts": 1794960000000,
+          "volumeUsd": 223770051
+        },
+        {
+          "date": "2026-11-19",
+          "ts": 1795046400000,
+          "volumeUsd": 264507974
+        },
+        {
+          "date": "2026-11-20",
+          "ts": 1795132800000,
+          "volumeUsd": 613106127
+        },
+        {
+          "date": "2026-11-21",
+          "ts": 1795219200000,
+          "volumeUsd": 452577262
         }
       ]
     }

@@ -28,7 +28,7 @@ const SETTLED_MS = 30_000;
 const UNSETTLED_MS = 5_000;
 
 export const RISE_VOLUME_SOURCE = "DefiLlama protocol/perps/risex · GET trading-view-data";
-export const TX_VOLUME_SOURCE = "DefiLlama protocol/perps/txflow-perps · POST candleSnapshot";
+export const TX_VOLUME_SOURCE = "DefiLlama protocol/perps/txflow · POST candleSnapshot";
 
 const memoryBlobs = new Map<VolumeVenue, Record<string, number>>();
 const livePulls = new Map<string, { at: number; data: DayPull }>();
