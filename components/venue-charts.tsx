@@ -310,8 +310,9 @@ const clientCache = new Map<ChartRange, { at: number; data: ChartsPayload }>();
 const clientJobs = new Map<ChartRange, Promise<ChartsPayload>>();
 const CLIENT_TTL_MS = 60_000;
 const PERSIST_MS = 24 * 60 * 60 * 1000;
-// v2 drops the old estimated candle history. Those bars are not the DefiLlama seed.
-const STORAGE_KEY = "perps.series.v2";
+// v3 drops series saved before Txflow's DefiLlama seed ran through 2026-11-21.
+// Those bars were the self-computed freeze for 2026-11-09 through 2026-11-21.
+const STORAGE_KEY = "perps.series.v3";
 
 let storeLoaded = false;
 
